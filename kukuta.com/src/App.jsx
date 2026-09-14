@@ -3302,7 +3302,16 @@ export default function App() {
       )}
 
       {!selectedProduct && !sellerDashboardMode && (
-        <section className="category-shortcuts scroll-reveal">
+        <>
+          <section className="fraud-disclaimer scroll-reveal">
+            <div className="fraud-disclaimer-content">
+              <span className="fraud-disclaimer-icon">🛡️</span>
+              <div className="fraud-disclaimer-text">
+                <strong>Shop safely:</strong> Review seller feedback before purchasing. Use secure payment methods and verify product details. Report suspicious sellers to keep our marketplace trusted.
+              </div>
+            </div>
+          </section>
+          <section className="category-shortcuts scroll-reveal">
           <div className="shortcuts-container">
             <button
               className={`category-btn ${selectedCategory === null ? 'active' : ''}`}
@@ -3346,6 +3355,7 @@ export default function App() {
             </label>
           </div>
         </section>
+        </>
       )}
 
       {!sellerDashboardMode && <section id="products" className="products-section scroll-reveal">
