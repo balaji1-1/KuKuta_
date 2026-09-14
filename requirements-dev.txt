@@ -1,0 +1,5 @@
+# Dev requirements for auth features
+djangorestframework-simplejwt
+pytest
+pytest-django
+PyMySQL

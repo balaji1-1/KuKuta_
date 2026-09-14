@@ -1,0 +1,28 @@
+{
+  "name": "kukuta",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Kukuta React application",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "keywords": [
+    "kukuta",
+    "react",
+    "vite"
+  ],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "jspdf": "^4.2.1",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "vite": "^5.4.1"
+  }
+}

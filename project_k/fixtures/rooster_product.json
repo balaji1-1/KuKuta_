@@ -1,0 +1,32 @@
+[
+  {
+    "model": "project_k.product",
+    "pk": 9999,
+    "fields": {
+      "name": "Golden Backyard Rooster",
+      "price": "₹500",
+      "quantity": 1,
+      "better_hen_model": null,
+      "rooster_model": null,
+      "description": "A sturdy backyard rooster, photographed on a farm.",
+      "category": "Poultry",
+      "bird_type": "Breeding Rooster",
+      "seller": "Local Seller",
+      "created_at": "2026-08-03T00:00:00Z",
+      "updated_at": "2026-08-03T00:00:00Z"
+    }
+  },
+  {
+    "model": "project_k.productimage",
+    "pk": 99999,
+    "fields": {
+      "product": 9999,
+      "image": "products/images/WhatsApp_Image_2026-07-22_at_23.08.39.jpeg",
+      "image_url": null,
+      "alt_text": "Rooster",
+      "is_primary": true,
+      "order": 0,
+      "created_at": "2026-08-03T00:00:00Z"
+    }
+  }
+]
