@@ -3693,6 +3693,34 @@ iframe {
   overflow-wrap: anywhere;
 }
 
+/* Seller Verification Badge */
+.seller-verified-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.4rem 0.7rem;
+  border-radius: 999px;
+  background: linear-gradient(135deg, #d4fc79, #84cc16);
+  border: 1px solid rgba(132, 204, 22, 0.3);
+  color: #3f6212;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  box-shadow: 0 4px 12px rgba(132, 204, 22, 0.2);
+}
+
+.seller-verified-icon {
+  font-size: 0.75rem;
+  font-weight: 900;
+}
+
+body[data-theme="dark"] .seller-verified-badge {
+  background: linear-gradient(135deg, rgba(132, 204, 22, 0.3), rgba(101, 163, 13, 0.25));
+  border-color: rgba(132, 204, 22, 0.4);
+  color: #dcfce7;
+}
+
 /* Dark mode styling for fraud alert */
 body[data-theme="dark"] .seller-fraud-alert {
   background: linear-gradient(135deg, rgba(239, 68, 68, 0.12), rgba(220, 38, 38, 0.08));

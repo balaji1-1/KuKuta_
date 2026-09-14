@@ -1828,6 +1828,8 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
     ? sellerReviews.reduce((total, review) => total + Number(review.rating || 0), 0) / sellerReviews.length
     : null;
 
+  const isSellerVerified = sellerAverage !== null && sellerAverage >= 4.5;
+
   const productAverage = reviews.length > 0
     ? reviews.reduce((total, review) => total + Number(review.rating || 0), 0) / reviews.length
     : null;
@@ -1955,7 +1957,19 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
           <div className="product-detail-image">{getProductImage(product)}</div>
           <div className="product-detail-info">
             <h2>{product.name}</h2>
-            {product.seller && <p className="seller-info">Sold by {product.seller}</p>}
+            {product.seller && (
+              <div>
+                <p className="seller-info">
+                  Sold by {product.seller}
+                  {isSellerVerified && (
+                    <span className="seller-verified-badge">
+                      <span className="seller-verified-icon">✓</span>
+                      Verified
+                    </span>
+                  )}
+                </p>
+              </div>
+            )}
             <p className="product-description">{product.description}</p>
             <div className="product-detail-price">{product.price}</div>
             {currentUser?.role === 'buyer' && sellerAverage !== null && sellerAverage < 3 && (
