@@ -1,48 +1,20 @@
-Dev helper scripts — Quick Start
-=================================
+Development Servers
+===================
 
-**Best approach:** Use the helper scripts at the repo root:
+Start both the React/Vite frontend and Django API with the same command:
 
-Files:
-------
-
-- `dev.sh` (Unix/macOS) — starts frontend in background, then runs Django `runserver`.
-- `dev.bat` (Windows) — opens frontend in a new terminal, then runs Django `runserver` in the current window.
-
-Both scripts use environment variables (optional):
-
-- `FRONTEND_DIR` — path to frontend directory (default `kukuta.com`)
-- `FRONTEND_CMD` — command to run frontend (default `npm run dev`)
-- `FRONTEND_LOG` — path to frontend logs (default `<FRONTEND_DIR>/frontend.log`)
-
-Quick start
------------
-
-**Windows (PowerShell / CMD):**
+Windows (PowerShell or CMD):
 
 ```cmd
 dev.bat
 ```
 
-**Unix/macOS (Bash / Zsh):**
+Unix/macOS:
 
 ```bash
-chmod +x dev.sh
 ./dev.sh
 ```
 
-**With custom options:**
+Or, from `kukuta.com`, run `npm run dev`. Both servers stop together when the command is interrupted.
 
-```bash
-FRONTEND_CMD="pnpm dev" ./dev.sh
-```
-
-```cmd
-set FRONTEND_CMD=pnpm dev
-dev.bat
-```
-
-Alternative: Django wrapper
----------------------------
-
-There is also a custom `runserver` wrapper in `project_k/management/commands/runserver.py` that attempts to auto-start the frontend when running `python manage.py runserver`. However, the helper scripts above are more reliable and simpler to use.
+Vite is available at `http://127.0.0.1:5179/static/` and Django at `http://127.0.0.1:8000/`. Use `npm run dev:react` in `kukuta.com` only when you want the frontend without Django.

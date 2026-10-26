@@ -36,7 +36,7 @@ function ForgotPasswordPage({ onClose, onSwitchToLogin, onNavigateToResetConfirm
         setUid(data.uid);
         setToken(data.token);
         if (onNavigateToResetConfirm) {
-          onNavigateToResetConfirm(data.uid, data.token);
+          onNavigateToResetConfirm(data.uid, data.token, data.expires_at);
           return;
         }
         setShowResetFields(true);

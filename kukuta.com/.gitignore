@@ -4,3 +4,7 @@ dist/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+MYSQL_DATABASE,
+MYSQL_USER,
+MYSQL_PASSWORD,
+MYSQL_HOST,

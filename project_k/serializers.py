@@ -1,6 +1,6 @@
 from django.contrib.auth.models import User
 from rest_framework import serializers
-from .models import Message, Product, ProductImage, ProductVideo, UserProfile, ProductReview, ProductReviewImage
+from .models import Message, Product, ProductImage, ProductVideo, ProductAudio, UserProfile, ProductReview, ProductReviewImage, Order
 
 class ProductImageSerializer(serializers.ModelSerializer):
     class Meta:
@@ -10,6 +10,11 @@ class ProductImageSerializer(serializers.ModelSerializer):
 class ProductVideoSerializer(serializers.ModelSerializer):
     class Meta:
         model = ProductVideo
+        fields = '__all__'
+
+class ProductAudioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ProductAudio
         fields = '__all__'
 
 
@@ -43,6 +48,23 @@ class MessageSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+class OrderSerializer(serializers.ModelSerializer):
+    product_name = serializers.CharField(source='product.name', read_only=True)
+    product_category = serializers.CharField(source='product.category', read_only=True)
+    buyer_name = serializers.CharField(source='buyer.username', read_only=True)
+    seller_name = serializers.CharField(source='seller.username', read_only=True, allow_null=True)
+
+    class Meta:
+        model = Order
+        fields = ['id', 'product', 'product_name', 'product_category', 'buyer', 'buyer_name', 'seller', 'seller_name', 'quantity', 'agreed_price', 'buyer_price_accepted', 'seller_price_accepted', 'status', 'tracking_number', 'notes', 'created_at', 'updated_at']
+        read_only_fields = ['id', 'buyer', 'buyer_name', 'product_name', 'product_category', 'seller_name', 'agreed_price', 'buyer_price_accepted', 'seller_price_accepted', 'tracking_number', 'created_at', 'updated_at']
+
+    def validate_quantity(self, value):
+        if value < 1:
+            raise serializers.ValidationError('Quantity must be at least 1.')
+        return value
+
+
 class ProductReviewSerializer(serializers.ModelSerializer):
     buyer_name = serializers.CharField(source='buyer.username', read_only=True)
     product_name = serializers.CharField(source='product.name', read_only=True)
@@ -71,16 +93,17 @@ class ProductReviewSerializer(serializers.ModelSerializer):
 class ProductSerializer(serializers.ModelSerializer):
     images = ProductImageSerializer(many=True, read_only=True)
     videos = ProductVideoSerializer(many=True, read_only=True)
+    audios = ProductAudioSerializer(many=True, read_only=True)
     image = serializers.SerializerMethodField()
     seller_email = serializers.SerializerMethodField()
     seller_phone = serializers.SerializerMethodField()
 
     class Meta:
         model = Product
-        fields = [field.name for field in Product._meta.fields] + ['images', 'videos', 'image', 'seller_email', 'seller_phone']
+        fields = [field.name for field in Product._meta.fields] + ['images', 'videos', 'audios', 'image', 'seller_email', 'seller_phone']
 
     def get_image(self, obj):
-        first_image = obj.images.first()
+        first_image = next(iter(obj.images.all()), None)
         if first_image is None:
             return '🥚'
 
@@ -119,8 +142,20 @@ class ProductSerializer(serializers.ModelSerializer):
     def validate(self, attrs):
         category = attrs.get('category')
         bird_type = attrs.get('bird_type')
+        age = attrs.get('age')
+        days_old = attrs.get('days_old')
+        price_per_item = attrs.get('price_per_item')
 
-        if category == 'Bird' and not bird_type:
-            raise serializers.ValidationError({'bird_type': 'Bird products require a bird type.'})
+        if category in {'Bird', 'Cattel', 'Egg*Chicks'} and not bird_type:
+            raise serializers.ValidationError({'bird_type': 'Animal products require a type selection.'})
+
+        if category in {'Bird', 'Cattel', 'Egg*Chicks'} and not age:
+            raise serializers.ValidationError({'age': 'Livestock products require the age to be specified.'})
+
+        if category == 'Egg*Chicks' and not days_old:
+            raise serializers.ValidationError({'days_old': 'Egg*Chicks listings require the number of days old to be specified.'})
+
+        if category == 'Egg*Chicks' and not price_per_item:
+            raise serializers.ValidationError({'price_per_item': 'Egg*Chicks listings require the price of each egg or chick.'})
 
         return attrs

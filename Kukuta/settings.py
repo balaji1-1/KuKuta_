@@ -12,9 +12,12 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 
 import os
 from pathlib import Path
+from django.core.exceptions import ImproperlyConfigured
+from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / '.env')
 
 
 # Quick-start development settings - unsuitable for production
@@ -122,7 +125,9 @@ INSTALLED_APPS = [
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
     'whitenoise.middleware.WhiteNoiseMiddleware',
-    'Kukuta.middleware.SecurityHeadersMiddleware',
+    'Kukuta.security_middleware.SecurityHeadersMiddleware',
+    'Kukuta.security_middleware.RateLimitMiddleware',
+    'Kukuta.security_middleware.RequestLoggingMiddleware',
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -156,7 +161,11 @@ if not _vite_url:
     # Try to detect from vite.config.js default port and check common fallback ports
     _vite_url = 'http://127.0.0.1:5179/static/'
 VITE_DEV_SERVER_URL = _vite_url
-USE_VITE_DEV_SERVER = DEBUG and os.environ.get('USE_VITE_DEV_SERVER', '1') != '0'
+USE_VITE_DEV_SERVER = (
+    DEBUG
+    and os.environ.get('DISABLE_FRONTEND') != '1'
+    and os.environ.get('USE_VITE_DEV_SERVER', '0') != '0'
+)
 
 WSGI_APPLICATION = 'Kukuta.wsgi.application'
 
@@ -164,30 +173,39 @@ WSGI_APPLICATION = 'Kukuta.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
-USE_MYSQL = bool(os.environ.get('MYSQL_DATABASE') and os.environ.get('MYSQL_USER'))
+_MYSQL_REQUIRED_SETTINGS = ('MYSQL_DATABASE', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_HOST')
+_missing_mysql_settings = [key for key in _MYSQL_REQUIRED_SETTINGS if not os.environ.get(key)]
+if _missing_mysql_settings:
+    raise ImproperlyConfigured(
+        'Configure these MySQL environment variables for development and production: '
+        + ', '.join(_missing_mysql_settings)
+    )
+if not DEBUG and not os.environ.get('REDIS_URL'):
+    raise ImproperlyConfigured('Production requires REDIS_URL for shared API throttling and caching.')
 
-if USE_MYSQL:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.mysql',
-            'NAME': os.environ.get('MYSQL_DATABASE', 'kukuta'),
-            'USER': os.environ.get('MYSQL_USER', 'root'),
-            'PASSWORD': os.environ.get('MYSQL_PASSWORD', ''),
-            'HOST': os.environ.get('MYSQL_HOST', '127.0.0.1'),
-            'PORT': os.environ.get('MYSQL_PORT', '3306'),
-            'OPTIONS': {
-                'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-            },
+DATABASES = {
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': os.environ['MYSQL_DATABASE'],
+        'USER': os.environ['MYSQL_USER'],
+        'PASSWORD': os.environ['MYSQL_PASSWORD'],
+        'HOST': os.environ['MYSQL_HOST'],
+        'PORT': os.environ.get('MYSQL_PORT', '3306'),
+        'OPTIONS': {
+            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+            'connect_timeout': 5,
         }
     }
-else:
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
+}
 
+
+# Password hashing - Use Argon2 for stronger security
+PASSWORD_HASHERS = [
+    'django.contrib.auth.hashers.Argon2PasswordHasher',
+    'django.contrib.auth.hashers.PBKDF2PasswordHasher',
+    'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
+    'django.contrib.auth.hashers.BCryptSHA256PasswordHasher',
+]
 
 # Password validation
 # https://docs.djangoproject.com/en/5.2/ref/settings/#auth-password-validators
@@ -198,6 +216,9 @@ AUTH_PASSWORD_VALIDATORS = [
     },
     {
         'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
+        'OPTIONS': {
+            'min_length': 10,  # Increased from default 8
+        }
     },
     {
         'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
@@ -250,7 +271,16 @@ EMAIL_USE_TLS = os.environ.get('EMAIL_USE_TLS', '1') == '1'
 EMAIL_HOST_USER = os.environ.get('EMAIL_HOST_USER', '')
 EMAIL_HOST_PASSWORD = os.environ.get('EMAIL_HOST_PASSWORD', '')
 DEFAULT_FROM_EMAIL = os.environ.get('DEFAULT_FROM_EMAIL', 'noreply@kukuta.com')
-FRONTEND_URL = 'http://127.0.0.1:8000'
+_frontend_url = os.environ.get('FRONTEND_URL') or os.environ.get('RENDER_EXTERNAL_URL')
+if not _frontend_url and DEBUG:
+    _frontend_url = os.environ.get('VITE_DEV_SERVER_URL') or 'http://127.0.0.1:8000'
+if _frontend_url:
+    if _frontend_url.endswith('/static/'):
+        _frontend_url = _frontend_url[:-8]
+    elif _frontend_url.endswith('/static'):
+        _frontend_url = _frontend_url[:-6]
+    _frontend_url = _frontend_url.rstrip('/')
+FRONTEND_URL = _frontend_url or None
 
 # Optional Twilio SMS delivery. Without these values, development logs the OTP instead.
 TWILIO_ACCOUNT_SID = os.environ.get('TWILIO_ACCOUNT_SID', '')
@@ -271,17 +301,26 @@ REST_FRAMEWORK = {
         'rest_framework.parsers.FormParser',
         'rest_framework.parsers.MultiPartParser',
     ),
+    # Enhanced throttling for API endpoints
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.AnonRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'user': os.environ.get('DJANGO_USER_THROTTLE_RATE', '1000000/minute'),
+        'anon': os.environ.get('DJANGO_ANON_THROTTLE_RATE', '1000000/minute'),
+    },
+    # Security and validation
+    'DEFAULT_FILTER_BACKENDS': [
+        'rest_framework.filters.SearchFilter',
+        'rest_framework.filters.OrderingFilter',
+    ],
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
+    'MAX_PAGE_SIZE': 100,
+    # CORS and content negotiation
+    'DEFAULT_CONTENT_NEGOTIATION_CLASS': 'rest_framework.negotiation.DefaultContentNegotiation',
 }
-
-# Basic throttling for API endpoints
-REST_FRAMEWORK.setdefault('DEFAULT_THROTTLE_CLASSES', [
-    'rest_framework.throttling.UserRateThrottle',
-    'rest_framework.throttling.AnonRateThrottle',
-])
-REST_FRAMEWORK.setdefault('DEFAULT_THROTTLE_RATES', {
-    'user': os.environ.get('DJANGO_USER_THROTTLE_RATE', '1000/minute' if DEBUG else '200/day'),
-    'anon': os.environ.get('DJANGO_ANON_THROTTLE_RATE', '1000/minute' if DEBUG else '50/day'),
-})
 
 SECURE_SSL_REDIRECT = os.environ.get('DJANGO_SECURE_COOKIE', '0') == '1'
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
@@ -299,8 +338,90 @@ SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_SAMESITE = 'Lax'
 X_FRAME_OPTIONS = 'DENY'
 
+# ============================================================================
+# CACHING CONFIGURATION
+# ============================================================================
+
+# In-memory cache for development, Redis for production
+if os.environ.get('REDIS_URL'):
+    CACHES = {
+        'default': {
+            'BACKEND': 'django_redis.cache.RedisCache',
+            'LOCATION': os.environ.get('REDIS_URL', 'redis://127.0.0.1:6379/1'),
+            'OPTIONS': {
+                'CLIENT_CLASS': 'django_redis.client.DefaultClient',
+            }
+        }
+    }
+else:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'LOCATION': 'unique-snowflake',
+        }
+    }
+
+# Cache timeout settings (in seconds)
+CACHE_TIMEOUT_SHORT = 300       # 5 minutes
+CACHE_TIMEOUT_MEDIUM = 3600     # 1 hour
+CACHE_TIMEOUT_LONG = 86400      # 24 hours
+
+# Shared API budget: one million requests across all API workers per minute.
+API_REQUEST_MINUTE_LIMIT = int(os.environ.get('API_REQUEST_MINUTE_LIMIT', '1000000'))
+
+# ============================================================================
+# DATABASE OPTIMIZATION
+# ============================================================================
+
+# Enable persistent database connections
+CONN_MAX_AGE = int(os.environ.get('DJANGO_DB_CONN_MAX_AGE', '60'))
+CONN_HEALTH_CHECKS = True
+
+# Database query logging in DEBUG mode
+if DEBUG:
+    LOGGING = {
+        'version': 1,
+        'disable_existing_loggers': False,
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+            },
+        },
+        'loggers': {
+            'django.db.backends': {
+                'handlers': ['console'],
+                'level': 'DEBUG',
+            },
+        },
+    }
+
 from datetime import timedelta
+
 SIMPLE_JWT = {
-    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=60),
-    'REFRESH_TOKEN_LIFETIME': timedelta(days=1),
+    'ACCESS_TOKEN_LIFETIME': timedelta(minutes=30),  # Reduced from 60 for better security
+    'REFRESH_TOKEN_LIFETIME': timedelta(days=7),      # Reduced from 1 day
+    'ROTATE_REFRESH_TOKENS': True,
+    'BLACKLIST_AFTER_ROTATION': True,
+    'UPDATE_LAST_LOGIN': True,
+    'ALGORITHM': 'HS256',
+    'SIGNING_KEY': os.environ.get('DJANGO_SECRET_KEY', SECRET_KEY),
+    'VERIFYING_KEY': None,
+    'AUDIENCE': None,
+    'ISSUER': None,
+    'JTI_CLAIM': 'jti',
+    'TOKEN_TYPE_CLAIM': 'token_type',
+    'JTI_CLAIM_NAME': 'jti',
+    'TOKEN_USER_CLASS': 'rest_framework_simplejwt.models.TokenUser',
+    'AUTH_HEADER_TYPES': ('Bearer',),
+    'AUTH_HEADER_NAME': 'HTTP_AUTHORIZATION',
+    'USER_ID_FIELD': 'id',
+    'USER_ID_CLAIM': 'user_id',
+    'USER_AUTHENTICATION_RULE': 'rest_framework_simplejwt.authentication.default_user_authentication_rule',
+    'AUTH_TOKEN_CLASSES': ('rest_framework_simplejwt.tokens.AccessToken',),
+    'TOKEN_OBTAIN_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenObtainPairSerializer',
+    'TOKEN_REFRESH_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenRefreshSerializer',
+    'TOKEN_VERIFY_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenVerifySerializer',
+    'TOKEN_BLACKLIST_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenBlacklistSerializer',
+    'SLIDING_TOKEN_OBTAIN_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenObtainSlidingSerializer',
+    'SLIDING_TOKEN_REFRESH_SERIALIZER': 'rest_framework_simplejwt.serializers.TokenRefreshSlidingSerializer',
 }

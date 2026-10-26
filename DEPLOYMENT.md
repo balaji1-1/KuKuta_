@@ -6,7 +6,7 @@ This guide will help you deploy your Kukuta project to Render.
 
 - GitHub account with your Kukuta repository
 - Render account (free tier available at render.com)
-- MySQL database (optional - can use SQLite on free tier)
+- MySQL database and Redis instance for production
 
 ## Step 1: Prepare Your Repository
 
@@ -66,9 +66,10 @@ TWILIO_AUTH_TOKEN=your_twilio_token
 TWILIO_FROM_NUMBER=+1234567890
 ```
 
-### Database (If Using MySQL - Optional)
+### Database and Shared Cache (Required in Production)
 
-If you want to use MySQL instead of SQLite:
+Production refuses to start without MySQL and Redis. Configure these with credentials
+from managed services; use shared services for a scaled deployment.
 
 ```
 MYSQL_DATABASE=kukuta_db
@@ -76,7 +77,14 @@ MYSQL_USER=db_user
 MYSQL_PASSWORD=your_password
 MYSQL_HOST=your-mysql-host.com
 MYSQL_PORT=3306
+REDIS_URL=rediss://user:password@your-redis-host:6379
 ```
+
+The local DEBUG configuration also requires MySQL; put the local connection values in
+an untracked root `.env` file. Local DEBUG may use in-memory cache. The Render Gunicorn
+process uses configurable worker/thread counts (`WEB_CONCURRENCY` and
+`GUNICORN_THREADS`). Select these alongside the instance memory and database connection
+limits; adding workers alone does not guarantee capacity.
 
 ## Step 4: Deploy
 
@@ -162,6 +170,14 @@ Render will automatically detect the change and redeploy (if webhook is set up).
 - 0.5GB RAM, 0.5GB storage
 
 For production, consider upgrading to paid tier.
+
+## Load Testing
+
+The application has not been benchmarked at one million requests. That number must be
+defined as a total over a period, concurrent users, or requests per second. Run a staged
+load test against production-like MySQL/Redis and deployment resources before setting a
+capacity claim; watch latency percentiles, error rate, worker saturation, and database
+connections during the test.
 
 ## Support
 

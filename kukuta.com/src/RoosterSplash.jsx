@@ -10,7 +10,7 @@ const RoosterSplash = ({ onAnimationComplete }) => {
       if (onAnimationComplete) {
         onAnimationComplete();
       }
-    }, 3000);
+    }, 800);
 
     return () => clearTimeout(timer);
   }, [onAnimationComplete]);

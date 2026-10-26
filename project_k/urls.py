@@ -25,6 +25,7 @@ except ImportError:
 router = DefaultRouter()
 router.register(r'products', views.ProductViewSet)
 router.register(r'messages', views.MessageViewSet)
+router.register(r'orders', views.OrderViewSet)
 router.register(r'reviews', views.ProductReviewViewSet)
 
 urlpatterns = router.urls + [

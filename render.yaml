@@ -11,12 +11,18 @@ services:
       cd .. &&
       python manage.py migrate &&
       python manage.py collectstatic --noinput
-    startCommand: gunicorn Kukuta.wsgi:application --bind 0.0.0.0:$PORT
+    startCommand: gunicorn Kukuta.wsgi:application --bind 0.0.0.0:$PORT --workers $WEB_CONCURRENCY --threads $GUNICORN_THREADS --timeout 30 --graceful-timeout 30 --worker-tmp-dir /dev/shm
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
       - key: DJANGO_DEBUG
         value: "0"
+      - key: WEB_CONCURRENCY
+        value: "2"
+      - key: GUNICORN_THREADS
+        value: "4"
+      - key: API_REQUEST_MINUTE_LIMIT
+        value: "1000000"
       - key: DJANGO_SECURE_SSL_REDIRECT
         value: "1"
       - key: DJANGO_SECURE_COOKIE
@@ -55,3 +61,5 @@ services:
         sync: false
       - key: MYSQL_PORT
         value: "3306"
+      - key: REDIS_URL
+        sync: false

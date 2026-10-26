@@ -5,7 +5,8 @@
   "description": "Kukuta React application",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+    "dev": "node start-dev.js",
+    "dev:react": "vite",
     "build": "vite build",
     "preview": "vite preview"
   },
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
+    "terser": "^5.51.2",
     "vite": "^5.4.1"
   }
 }

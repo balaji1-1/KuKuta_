@@ -1,3 +1,5 @@
+import uuid
+
 from django.db import models  # type: ignore
 from django.contrib.auth.models import User  # type: ignore
 from django.db.models.signals import post_save  # type: ignore
@@ -14,15 +16,24 @@ class Product(models.Model):
 
     name = models.CharField(max_length=200)
     price = models.CharField(max_length=20)  # Store as string like "₹12"
+    price_per_item = models.CharField(max_length=20, blank=True, null=True)
     quantity = models.PositiveIntegerField(default=1)
     better_hen_model = models.FileField(upload_to='products/models/hens/', blank=True, null=True)
     rooster_model = models.FileField(upload_to='products/models/roosters/', blank=True, null=True)
     description = models.TextField()
     category = models.CharField(max_length=100)
     bird_type = models.CharField(max_length=50, choices=BIRD_TYPE_CHOICES, blank=True, null=True)
+    age = models.CharField(max_length=50, blank=True, null=True)
+    days_old = models.CharField(max_length=50, blank=True, null=True)
     seller = models.CharField(max_length=100, blank=True, null=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        indexes = [
+            models.Index(fields=['category', 'created_at'], name='product_category_created_idx'),
+            models.Index(fields=['seller', 'created_at'], name='product_seller_created_idx'),
+        ]
 
     def __str__(self):
         return self.name
@@ -56,6 +67,21 @@ class ProductVideo(models.Model):
 
     def __str__(self):
         return f"Video for {self.product.name}"
+
+class ProductAudio(models.Model):
+    product = models.ForeignKey(Product, related_name='audios', on_delete=models.CASCADE)
+    audio = models.FileField(upload_to='products/audios/', blank=True, null=True)
+    audio_url = models.URLField(blank=True, null=True)
+    title = models.CharField(max_length=200, blank=True, null=True)
+    description = models.TextField(blank=True, null=True)
+    order = models.PositiveIntegerField(default=0)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['order', 'created_at']
+
+    def __str__(self):
+        return f"Audio for {self.product.name}"
 
 class UserProfile(models.Model):
     ROLE_CHOICES = [
@@ -100,6 +126,47 @@ class UserCredential(models.Model):
         ordering = ['-updated_at']
 
 
+class Order(models.Model):
+    STATUS_CHOICES = [
+        ('pending_price', 'Awaiting price agreement'),
+        ('confirmed', 'Confirmed'),
+        ('processing', 'Processing'),
+        ('shipped', 'Shipped'),
+        ('delivered', 'Delivered'),
+    ]
+
+    buyer = models.ForeignKey(User, related_name='orders', on_delete=models.CASCADE)
+    seller = models.ForeignKey(User, related_name='sales', on_delete=models.SET_NULL, null=True, blank=True)
+    product = models.ForeignKey(Product, related_name='orders', on_delete=models.CASCADE)
+    quantity = models.PositiveIntegerField(default=1)
+    agreed_price = models.DecimalField(max_digits=12, decimal_places=2, blank=True, null=True)
+    buyer_price_accepted = models.BooleanField(default=False)
+    seller_price_accepted = models.BooleanField(default=False)
+    agreement_key = models.CharField(max_length=120, unique=True, blank=True, null=True, editable=False)
+    status = models.CharField(max_length=20, choices=STATUS_CHOICES, default='confirmed')
+    tracking_number = models.CharField(max_length=40, unique=True, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['buyer', '-created_at'], name='order_buyer_created_idx'),
+            models.Index(fields=['seller', '-created_at'], name='order_seller_created_idx'),
+        ]
+
+    def save(self, *args, **kwargs):
+        if not self.tracking_number:
+            prefix = 'KKT'
+            base = self.product.name[:3].upper() if self.product_id else 'GEN'
+            self.tracking_number = f'{prefix}-{base}-{uuid.uuid4().hex[:8].upper()}'
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f'{self.tracking_number} - {self.product.name}'
+
+
 class Message(models.Model):
     sender = models.ForeignKey(User, related_name='sent_messages', on_delete=models.CASCADE)
     recipient = models.ForeignKey(User, related_name='received_messages', on_delete=models.CASCADE)
@@ -110,6 +177,10 @@ class Message(models.Model):
 
     class Meta:
         ordering = ['created_at']
+        indexes = [
+            models.Index(fields=['sender', 'created_at'], name='message_sender_created_idx'),
+            models.Index(fields=['recipient', 'created_at'], name='message_recipient_created_idx'),
+        ]
 
     def __str__(self):
         return f"{self.sender.username} -> {self.recipient.username}: {self.content[:40]}"
@@ -125,6 +196,9 @@ class ProductReview(models.Model):
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [
+            models.Index(fields=['product', '-created_at'], name='review_product_created_idx'),
+        ]
         constraints = [
             models.UniqueConstraint(fields=['product', 'buyer'], name='one_review_per_buyer_product'),
         ]

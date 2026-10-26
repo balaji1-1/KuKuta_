@@ -29,7 +29,11 @@ class Command(RunserverCommand):
         self.frontend_logfile = None
         self.frontend_url = None
 
-        start_frontend = not options.get('no_frontend') and os.environ.get('DISABLE_FRONTEND') is None
+        start_frontend = (
+            not options.get('no_frontend')
+            and os.environ.get('DISABLE_FRONTEND') is None
+            and os.environ.get('START_FRONTEND', '0') == '1'
+        )
 
         if start_frontend:
             try:

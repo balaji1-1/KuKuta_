@@ -4,6 +4,27 @@ import django.db.models.deletion
 from django.db import migrations, models
 
 
+def preserve_legacy_product_images(apps, schema_editor):
+    Product = apps.get_model('project_k', 'Product')
+    ProductImage = apps.get_model('project_k', 'ProductImage')
+    database = schema_editor.connection.alias
+    legacy_products = Product.objects.using(database).exclude(image__isnull=True).exclude(image='')
+
+    batch = []
+    for product in legacy_products.iterator(chunk_size=500):
+        batch.append(ProductImage(
+            product_id=product.pk,
+            alt_text=product.image,
+            is_primary=True,
+            order=0,
+        ))
+        if len(batch) == 500:
+            ProductImage.objects.using(database).bulk_create(batch)
+            batch = []
+    if batch:
+        ProductImage.objects.using(database).bulk_create(batch)
+
+
 class Migration(migrations.Migration):
 
     dependencies = [
@@ -11,10 +32,6 @@ class Migration(migrations.Migration):
     ]
 
     operations = [
-        migrations.RemoveField(
-            model_name='product',
-            name='image',
-        ),
         migrations.CreateModel(
             name='ProductImage',
             fields=[
@@ -46,5 +63,10 @@ class Migration(migrations.Migration):
             options={
                 'ordering': ['order', 'created_at'],
             },
+        ),
+        migrations.RunPython(preserve_legacy_product_images, migrations.RunPython.noop),
+        migrations.RemoveField(
+            model_name='product',
+            name='image',
         ),
     ]

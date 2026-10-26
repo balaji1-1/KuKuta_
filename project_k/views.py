@@ -1,6 +1,8 @@
 import json
-import random
+import os
+import secrets
 import base64
+from decimal import Decimal, InvalidOperation
 from urllib.request import Request, urlopen
 from urllib.parse import urlencode
 from urllib.parse import urlparse
@@ -10,12 +12,14 @@ from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import validate_password, ValidationError
 from django.contrib.auth.tokens import default_token_generator
 from django.core.mail import send_mail
+from django.template.loader import render_to_string
 from django.views.decorators.csrf import ensure_csrf_cookie
 from datetime import timedelta
 from django.utils import timezone
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
 from django.conf import settings
+from django.db import transaction
 from rest_framework import viewsets, status
 from rest_framework.decorators import api_view, permission_classes, action, throttle_classes
 from rest_framework.permissions import AllowAny, IsAuthenticated, IsAuthenticatedOrReadOnly
@@ -23,8 +27,8 @@ from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle, UserRateThrottle
 from rest_framework_simplejwt.tokens import RefreshToken
 
-from .models import Product, UserProfile, ProductImage, ProductVideo, UserCredential, Message, ProductReview, ProductReviewImage
-from .serializers import ProductSerializer, ProductImageSerializer, ProductVideoSerializer, MessageSerializer, ProductReviewSerializer
+from .models import Product, UserProfile, ProductImage, ProductVideo, ProductAudio, UserCredential, Message, ProductReview, ProductReviewImage, Order
+from .serializers import ProductSerializer, ProductImageSerializer, ProductVideoSerializer, ProductAudioSerializer, MessageSerializer, ProductReviewSerializer, OrderSerializer
 
 ALLOWED_IMAGE_TYPES = {
     'image/jpeg',
@@ -36,6 +40,15 @@ ALLOWED_VIDEO_TYPES = {
     'video/mp4',
     'video/webm',
     'video/ogg',
+}
+ALLOWED_AUDIO_TYPES = {
+    'audio/mpeg',
+    'audio/mp3',
+    'audio/wav',
+    'audio/x-wav',
+    'audio/ogg',
+    'audio/mp4',
+    'audio/m4a',
 }
 ALLOWED_MODEL_EXTENSIONS = {'.glb', '.gltf', '.obj', '.fbx', '.usdz'}
 
@@ -63,7 +76,7 @@ def validate_uploaded_file(uploaded_file, allowed_types=None, allowed_extensions
 
 
 def generate_otp(length=6):
-    return ''.join(str(random.randint(0, 9)) for _ in range(length))
+    return ''.join(secrets.choice('0123456789') for _ in range(length))
 
 
 def send_sms_otp(phone, otp):
@@ -77,7 +90,7 @@ def send_sms_otp(phone, otp):
     payload = urlencode({
         'To': phone,
         'From': from_number,
-        'Body': f'Your Kukuta password reset OTP is {otp}. It expires in 10 minutes.',
+        'Body': f'Your Kukuta password reset OTP is {otp}. It expires in 5 minutes.',
     }).encode()
     credentials = base64.b64encode(f'{account_sid}:{auth_token}'.encode()).decode()
     request = Request(
@@ -95,6 +108,9 @@ class ProductViewSet(viewsets.ModelViewSet):
     queryset = Product.objects.all()
     serializer_class = ProductSerializer
 
+    def get_queryset(self):
+        return Product.objects.prefetch_related('images', 'videos', 'audios')
+
     def create(self, request, *args, **kwargs):
         # Handle both FormData and JSON
         if request.content_type.startswith('multipart/form-data'):
@@ -102,9 +118,7 @@ class ProductViewSet(viewsets.ModelViewSet):
             data = request.data.copy()
             images_data = []
             videos_data = []
-            category_value = data.get('category', '')
-            if category_value == 'Egg*Chicks' and (not request.FILES.get('better_hen_model') or not request.FILES.get('rooster_model')):
-                return Response({'error': 'Egg*Chicks products require both hen and rooster files.'}, status=status.HTTP_400_BAD_REQUEST)
+            audios_data = []
 
             # Validate model file uploads
             if not validate_uploaded_file(request.FILES.get('better_hen_model'), allowed_extensions=ALLOWED_MODEL_EXTENSIONS, max_size=20 * 1024 * 1024):
@@ -138,9 +152,25 @@ class ProductViewSet(viewsets.ModelViewSet):
                         'is_primary': len(image_files) == 0 and i == 0,
                     })
 
+            for media_key, label in (
+                ('breeder_hen_images', 'Breeder hen'),
+                ('breeder_rooster_images', 'Breeder rooster'),
+            ):
+                for image_file in request.FILES.getlist(media_key):
+                    if not validate_uploaded_file(image_file, allowed_types=ALLOWED_IMAGE_TYPES, max_size=10 * 1024 * 1024):
+                        return Response({'error': f'Invalid {label.lower()} image upload.'}, status=status.HTTP_400_BAD_REQUEST)
+                    images_data.append({
+                        'image': image_file,
+                        'alt_text': f'{label} photo - {image_file.name}',
+                        'order': len(images_data),
+                        'is_primary': not images_data,
+                    })
+
             # Extract video files
             video_files = request.FILES.getlist('videos')
             for i, video_file in enumerate(video_files):
+                if not validate_uploaded_file(video_file, allowed_types=ALLOWED_VIDEO_TYPES, max_size=100 * 1024 * 1024):
+                    return Response({'error': 'Invalid video upload.'}, status=status.HTTP_400_BAD_REQUEST)
                 videos_data.append({
                     'video': video_file,
                     'order': i,
@@ -160,16 +190,56 @@ class ProductViewSet(viewsets.ModelViewSet):
                         'order': len(video_files) + i,
                     })
 
+            for media_key, label in (
+                ('breeder_hen_videos', 'Breeder hen'),
+                ('breeder_rooster_videos', 'Breeder rooster'),
+            ):
+                for video_file in request.FILES.getlist(media_key):
+                    if not validate_uploaded_file(video_file, allowed_types=ALLOWED_VIDEO_TYPES, max_size=100 * 1024 * 1024):
+                        return Response({'error': f'Invalid {label.lower()} video upload.'}, status=status.HTTP_400_BAD_REQUEST)
+                    videos_data.append({
+                        'video': video_file,
+                        'title': f'{label} video - {video_file.name}',
+                        'order': len(videos_data),
+                    })
+
+            # Extract audio files
+            audio_files = request.FILES.getlist('audios')
+            for i, audio_file in enumerate(audio_files):
+                if not validate_uploaded_file(audio_file, allowed_types=ALLOWED_AUDIO_TYPES, max_size=20 * 1024 * 1024):
+                    return Response({'error': 'Invalid audio upload.'}, status=status.HTTP_400_BAD_REQUEST)
+                audios_data.append({
+                    'audio': audio_file,
+                    'order': i,
+                })
+
+            # Extract audio URLs
+            audio_urls = []
+            for key, value in data.items():
+                if key.startswith('audio_urls['):
+                    audio_urls.append(value)
+            for i, url in enumerate(audio_urls):
+                if url.strip():
+                    if not is_safe_external_url(url):
+                        return Response({'error': 'Invalid external audio URL.'}, status=status.HTTP_400_BAD_REQUEST)
+                    audios_data.append({
+                        'audio_url': url,
+                        'order': len(audio_files) + i,
+                    })
+
             # Create the product
             product_data = {
                 'name': data.get('name'),
                 'price': data.get('price'),
+                'price_per_item': data.get('price_per_item'),
                 'quantity': data.get('quantity', 1),
                 'better_hen_model': request.FILES.get('better_hen_model'),
                 'rooster_model': request.FILES.get('rooster_model'),
                 'description': data.get('description'),
                 'category': data.get('category'),
                 'bird_type': data.get('bird_type'),
+                'age': data.get('age'),
+                'days_old': data.get('days_old'),
                 'seller': data.get('seller') or getattr(request.user, 'username', None),
             }
         else:
@@ -177,12 +247,19 @@ class ProductViewSet(viewsets.ModelViewSet):
             data = request.data.copy()
             images_data = data.pop('images', [])
             videos_data = data.pop('videos', [])
+            audios_data = data.pop('audios', [])
             product_data = data
             if not product_data.get('seller'):
                 product_data['seller'] = getattr(request.user, 'username', None)
 
-        if product_data.get('category') == 'Bird' and not product_data.get('bird_type'):
-            return Response({'error': 'Bird products require a bird type.'}, status=status.HTTP_400_BAD_REQUEST)
+        if product_data.get('category') in {'Bird', 'Cattel', 'Egg*Chicks'} and not product_data.get('bird_type'):
+            return Response({'error': 'Animal products require a type selection.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if product_data.get('category') in {'Bird', 'Cattel', 'Egg*Chicks'} and not product_data.get('age'):
+            return Response({'error': 'Livestock products require an age value.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if product_data.get('category') == 'Egg*Chicks' and not product_data.get('days_old'):
+            return Response({'error': 'Egg*Chicks products require the number of days old.'}, status=status.HTTP_400_BAD_REQUEST)
 
         # Create the product
         serializer = self.get_serializer(data=product_data)
@@ -203,7 +280,14 @@ class ProductViewSet(viewsets.ModelViewSet):
             if video_serializer.is_valid():
                 video_serializer.save()
 
-        # Return the product with images and videos
+        # Handle audios
+        for audio_data in audios_data:
+            audio_data['product'] = product.id
+            audio_serializer = ProductAudioSerializer(data=audio_data)
+            if audio_serializer.is_valid():
+                audio_serializer.save()
+
+        # Return the product with images, videos, and audios
         serializer = self.get_serializer(product)
         return Response(serializer.data, status=status.HTTP_201_CREATED)
 
@@ -352,7 +436,9 @@ class MessageViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         user = self.request.user
-        return Message.objects.filter(sender=user) | Message.objects.filter(recipient=user)
+        return (Message.objects.filter(sender=user) | Message.objects.filter(recipient=user)).select_related(
+            'sender', 'recipient', 'product'
+        )
 
     def create(self, request, *args, **kwargs):
         recipient_name = request.data.get('recipient')
@@ -381,6 +467,131 @@ class MessageViewSet(viewsets.ModelViewSet):
         return Response(self.get_serializer(message).data)
 
 
+class OrderViewSet(viewsets.ModelViewSet):
+    queryset = Order.objects.select_related('buyer', 'seller', 'product').all()
+    serializer_class = OrderSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        return (Order.objects.filter(buyer=user) | Order.objects.filter(seller=user)).exclude(
+            status='pending_price'
+        ).select_related('buyer', 'seller', 'product')
+
+    def create(self, request, *args, **kwargs):
+        return Response(
+            {'error': 'An order is created only after the buyer and seller accept the same price in chat.'},
+            status=status.HTTP_409_CONFLICT,
+        )
+
+    @action(detail=False, methods=['get', 'post'], url_path='price-agreement')
+    def price_agreement(self, request):
+        product_id = request.query_params.get('product_id') if request.method == 'GET' else request.data.get('product_id')
+        participant_name = request.query_params.get('participant') if request.method == 'GET' else request.data.get('participant')
+        if not product_id:
+            return Response({'error': 'product_id is required'}, status=status.HTTP_400_BAD_REQUEST)
+
+        try:
+            product = Product.objects.get(pk=product_id)
+        except Product.DoesNotExist:
+            return Response({'error': 'Product not found'}, status=status.HTTP_404_NOT_FOUND)
+
+        seller = User.objects.filter(username__iexact=(product.seller or '')).first()
+        if seller is None:
+            return Response({'error': 'This product does not have an active seller account.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if request.user.pk == seller.pk:
+            buyer = User.objects.filter(username__iexact=(participant_name or '')).first()
+            if buyer is None or buyer.pk == seller.pk:
+                return Response({'error': 'A different chat participant is required.'}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            if participant_name and participant_name.casefold() != seller.username.casefold():
+                return Response({'error': 'This participant is not part of the product conversation.'}, status=status.HTTP_403_FORBIDDEN)
+            buyer = request.user
+
+        if request.method == 'GET':
+            order = Order.objects.filter(product=product, buyer=buyer, seller=seller).order_by('-created_at').first()
+            if order is None:
+                return Response({
+                    'product': product.pk,
+                    'product_name': product.name,
+                    'buyer_name': buyer.username,
+                    'seller_name': seller.username,
+                    'agreed_price': None,
+                    'buyer_price_accepted': False,
+                    'seller_price_accepted': False,
+                    'status': 'not_started',
+                })
+            return Response(self.get_serializer(order).data)
+
+        try:
+            agreed_price = Decimal(str(request.data.get('agreed_price', '')).strip())
+        except (InvalidOperation, TypeError, ValueError):
+            return Response({'error': 'Enter a valid agreed price.'}, status=status.HTTP_400_BAD_REQUEST)
+        if not agreed_price.is_finite() or agreed_price <= 0 or agreed_price.as_tuple().exponent < -2 or agreed_price >= Decimal('10000000000'):
+            return Response({'error': 'Agreed price must be greater than zero and have at most two decimal places.'}, status=status.HTTP_400_BAD_REQUEST)
+
+        order_id = request.data.get('order_id')
+        agreement_key = f'{product.pk}:{buyer.pk}:{seller.pk}'
+        with transaction.atomic():
+            if order_id:
+                order = Order.objects.select_for_update().filter(
+                    pk=order_id, product=product, buyer=buyer, seller=seller
+                ).first()
+                if order is None:
+                    return Response({'error': 'Price agreement not found.'}, status=status.HTTP_404_NOT_FOUND)
+                if order.status == 'confirmed':
+                    if order.agreed_price == agreed_price:
+                        return Response(self.get_serializer(order).data)
+                    return Response({'error': 'This order is already confirmed. Start a new price agreement.'}, status=status.HTTP_409_CONFLICT)
+            else:
+                order, _ = Order.objects.select_for_update().get_or_create(
+                    agreement_key=agreement_key,
+                    defaults={
+                        'product': product,
+                        'buyer': buyer,
+                        'seller': seller,
+                        'quantity': 1,
+                        'agreed_price': agreed_price,
+                        'status': 'pending_price',
+                    },
+                )
+
+            if order.agreed_price != agreed_price:
+                order.agreed_price = agreed_price
+                order.buyer_price_accepted = False
+                order.seller_price_accepted = False
+
+            if request.user.pk == buyer.pk:
+                order.buyer_price_accepted = True
+            else:
+                order.seller_price_accepted = True
+
+            order.status = 'confirmed' if order.buyer_price_accepted and order.seller_price_accepted else 'pending_price'
+            if order.status == 'confirmed':
+                order.agreement_key = None
+            order.save(update_fields=[
+                'agreed_price', 'buyer_price_accepted', 'seller_price_accepted', 'agreement_key', 'status', 'updated_at'
+            ])
+
+        return Response(self.get_serializer(order).data)
+
+    @action(detail=True, methods=['patch'])
+    def update_status(self, request, pk=None):
+        order = self.get_object()
+        status_value = request.data.get('status')
+        if status_value not in dict(Order.STATUS_CHOICES):
+            return Response({'error': 'Invalid status'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if request.user != order.buyer and request.user != order.seller:
+            return Response({'error': 'You cannot update this order'}, status=status.HTTP_403_FORBIDDEN)
+
+        order.status = status_value
+        order.notes = request.data.get('notes', order.notes)
+        order.save(update_fields=['status', 'notes', 'updated_at'])
+        return Response(self.get_serializer(order).data)
+
+
 class ProductReviewViewSet(viewsets.ModelViewSet):
     queryset = ProductReview.objects.select_related('buyer', 'product').prefetch_related('images').all()
     serializer_class = ProductReviewSerializer
@@ -389,11 +600,13 @@ class ProductReviewViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         queryset = super().get_queryset()
         product_id = self.request.query_params.get('product')
-        seller = self.request.query_params.get('seller')
+        seller = (self.request.query_params.get('seller') or '').strip()
+
         if product_id:
             queryset = queryset.filter(product_id=product_id)
         if seller:
-            queryset = queryset.filter(product__seller__iexact=seller)
+            queryset = queryset.filter(product__seller__iexact=seller).distinct()
+
         return queryset
 
     def perform_create(self, serializer):
@@ -568,21 +781,42 @@ def password_reset_view(request):
 
     otp = generate_otp(6)
     profile.password_reset_otp = otp
-    profile.password_reset_otp_expires_at = timezone.now() + timedelta(minutes=10)
+    profile.password_reset_otp_expires_at = timezone.now() + timedelta(minutes=5)
     profile.save()
 
     token = default_token_generator.make_token(user)
     uid = urlsafe_base64_encode(force_bytes(user.pk))
-    frontend_url = getattr(settings, 'FRONTEND_URL', 'http://127.0.0.1:8000')
-    reset_link = f"{frontend_url.rstrip('/')}/password-reset-confirm/{uid}/{token}/"
+    expires_at = profile.password_reset_otp_expires_at.isoformat()
+    frontend_url = (
+        getattr(settings, 'FRONTEND_URL', None)
+        or os.environ.get('FRONTEND_URL')
+    )
+    vite_url = getattr(settings, 'VITE_DEV_SERVER_URL', None) or os.environ.get('VITE_DEV_SERVER_URL')
+    if getattr(settings, 'DEBUG', False) and vite_url:
+        frontend_url = vite_url
+    if not frontend_url:
+        frontend_url = request.build_absolute_uri('/')
+    if frontend_url.endswith('/static/'):
+        frontend_url = frontend_url[:-8]
+    elif frontend_url.endswith('/static'):
+        frontend_url = frontend_url[:-6]
+    reset_link = (
+        f"{frontend_url.rstrip('/')}/password-reset-confirm/{uid}/{token}/"
+        f"?{urlencode({'expires_at': expires_at})}"
+    )
 
     if '@' in identifier and user.email:
         send_mail(
             'Password Reset OTP',
-            f'Your password reset OTP is {otp}. Use it to reset your password at: {reset_link}',
+            f'Your Kukuta password reset code is {otp}. It expires in 5 minutes. Use this link to reset your password: {reset_link}',
             settings.DEFAULT_FROM_EMAIL,
             [user.email],
             fail_silently=False,
+            html_message=render_to_string('project_k/password_reset_otp_email.html', {
+                'otp': otp,
+                'reset_link': reset_link,
+                'expiry_minutes': 5,
+            }),
         )
     else:
         send_sms_otp(profile.phone, otp)
@@ -592,6 +826,7 @@ def password_reset_view(request):
         'reset_link': reset_link,
         'uid': uid,
         'token': token,
+        'expires_at': expires_at,
     })
 
 @api_view(['POST'])
@@ -628,7 +863,7 @@ def password_reset_confirm_view(request, uidb64, token):
 
     if not profile.password_reset_otp or profile.password_reset_otp != otp:
         return Response({'error': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
-    if not profile.password_reset_otp_expires_at or profile.password_reset_otp_expires_at < timezone.now():
+    if not profile.password_reset_otp_expires_at or profile.password_reset_otp_expires_at <= timezone.now():
         return Response({'error': 'OTP has expired'}, status=status.HTTP_400_BAD_REQUEST)
 
     new_password = request.data.get('new_password')

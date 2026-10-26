@@ -1,25 +1,14 @@
 #!/usr/bin/env bash
 set -e
 
-# dev.sh — start frontend (background) and Django runserver (foreground)
-# Usage: ./dev.sh
-# Environment variables:
-#  FRONTEND_DIR  (default: kukuta.com)
-#  FRONTEND_CMD  (default: npm run dev)
-#  FRONTEND_LOG  (default: <FRONTEND_DIR>/frontend.log)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-FRONTEND_DIR="${FRONTEND_DIR:-kukuta.com}"
-FRONTEND_CMD="${FRONTEND_CMD:-npm run dev}"
-FRONTEND_LOG="${FRONTEND_LOG:-$FRONTEND_DIR/frontend.log}"
+if [ -f "$SCRIPT_DIR/.venv/bin/activate" ]; then
+  . "$SCRIPT_DIR/.venv/bin/activate"
+elif [ -f "$HOME/OneDrive/project k.com/.venv/bin/activate" ]; then
+  . "$HOME/OneDrive/project k.com/.venv/bin/activate"
+fi
 
-mkdir -p "$(dirname "$FRONTEND_LOG")" || true
-
-echo "Starting frontend: $FRONTEND_CMD in $FRONTEND_DIR — logging to $FRONTEND_LOG"
-(
-  cd "$FRONTEND_DIR" || exit 1
-  # run in background and redirect output to log
-  eval "$FRONTEND_CMD" >> "$FRONTEND_LOG" 2>&1 &
-)
-
-# start Django runserver in foreground
-python manage.py runserver
+cd "$SCRIPT_DIR/kukuta.com"
+echo "Starting Kukuta React and Django development servers..."
+npm run dev

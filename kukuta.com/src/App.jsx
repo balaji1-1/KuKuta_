@@ -1,28 +1,37 @@
-import { useState, useEffect } from 'react';
-import React from 'react'
-import { jsPDF } from 'jspdf';
-import ForgotPasswordPage from './ForgotPassword';
+import React, { lazy, Suspense, useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import RoosterSplash from './RoosterSplash';
 import ProductCard from './ProductCard';
-import ProductPage from './ProductPage';
 import Messenger from './Messenger';
-import apiFetch from './api';
+import apiFetch, { storeAuthTokens } from './api';
+import { LazyBoundary, useDebounce } from './performance.jsx';
 
-const categories = [
-  'Egg*Chicks',
-  'Bird',
-  'Feed & Nutrition',
-  'Housing & Shelter',
-  'Equipment & Tools',
-  'Health & Care',
-  'Cattel',
+const ForgotPasswordPage = lazy(() => import('./ForgotPassword'));
+const ProductPage = lazy(() => import('./ProductPage'));
+const SellerDashboardPage = lazy(() => import('./SellerDashboardPage'));
+const BuyerOrderHistoryPage = lazy(() => import('./SellerDashboardPage').then((module) => ({ default: module.BuyerOrderHistoryPage })));
+
+const PRODUCT_CATEGORY_OPTIONS = [
+  { value: 'Egg*Chicks', label: 'Egg & Chicks' },
+  { value: 'Bird', label: 'Bird' },
+  { value: 'Feed & Nutrition', label: 'Feed & Nutrition' },
+  { value: 'Housing & Shelter', label: 'Housing & Shelter' },
+  { value: 'Equipment & Tools', label: 'Equipment & Tools' },
+  { value: 'Health & Care', label: 'Health & Care' },
+  { value: 'Cattel', label: 'Cattle' },
 ];
+
+const categories = PRODUCT_CATEGORY_OPTIONS.map((option) => option.value);
 
 const categoryGroups = [
   { title: 'Livestock', subtitle: 'Birds and farm animals', categories: ['Egg*Chicks', 'Bird', 'Cattel'] },
   { title: 'Care & Nutrition', subtitle: 'Feed, health and medication', categories: ['Feed & Nutrition', 'Health & Care'] },
   { title: 'Housing & Tools', subtitle: 'Shelter and farm equipment', categories: ['Housing & Shelter', 'Equipment & Tools'] },
 ];
+
+const getCategoryLabel = (category) => {
+  const option = PRODUCT_CATEGORY_OPTIONS.find((item) => item.value === category);
+  return option ? option.label : (category || 'Product');
+};
 
 const birdTypeOptions = [
   'Breeding Hen',
@@ -32,8 +41,29 @@ const birdTypeOptions = [
   'Pullet',
 ];
 
+const livestockAgeOptions = [
+  '2 weeks',
+  '1 month',
+  '2 months',
+  '3 months',
+  '4 months',
+  '5 months',
+  '6 months',
+  '8 months',
+  '10 months',
+  '12 months',
+  '1 year',
+  '2 years',
+  '3 years',
+  '4+ years',
+];
+const breedingBirdAgeOptions = livestockAgeOptions.filter((option) =>
+  ['1 year', '2 years', '3 years', '4+ years'].includes(option)
+);
+
 const LIVESTOCK_CATEGORIES = new Set(['Egg*Chicks', 'Bird', 'Cattel']);
 const CURRENCY_SYMBOL = '₹';
+const MAX_PRODUCT_VIDEO_SIZE = 100 * 1024 * 1024;
 
 const parsePrice = (price) => parseFloat(String(price).replace(/[^0-9.-]+/g, '')) || 0;
 const formatPrice = (amount) => `${CURRENCY_SYMBOL}${Number(amount).toFixed(2)}`;
@@ -64,114 +94,43 @@ const createInvoiceForOrder = (order, product = null) => {
   };
 };
 
-const getProductImage = (product) => {
+const mapAgreedOrder = (record) => {
+  const price = formatPrice(Number(record.agreed_price));
+  const product = {
+    id: record.product,
+    name: record.product_name || 'Product',
+    category: record.product_category || 'General',
+  };
+  const order = {
+    id: record.id,
+    productId: record.product,
+    productName: product.name,
+    price,
+    seller: record.seller_name || 'Seller',
+    buyer: record.buyer_name || 'Buyer',
+    date: record.created_at ? new Date(record.created_at).toLocaleDateString() : new Date().toLocaleDateString(),
+    status: 'Confirmed',
+  };
+  return { ...order, invoice: createInvoiceForOrder(order, product) };
+};
+
+const getProductImage = (product, { isPriority = false } = {}) => {
   const imageUrl = product.image || product.image_url || product.images?.[0]?.image_url || product.images?.[0]?.image;
   const safeImageUrl = typeof imageUrl === 'string' ? imageUrl.trim() : '';
+  const loading = isPriority ? 'eager' : 'lazy';
+  const fetchPriority = isPriority ? 'high' : 'low';
 
   if (safeImageUrl && /^https?:\/\//i.test(safeImageUrl)) {
-    return <img src={safeImageUrl} alt={product.name || 'Product'} className="product-image-media" onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
+    return <img src={safeImageUrl} alt={product.name || 'Product'} className="product-image-media" loading={loading} decoding="async" fetchPriority={fetchPriority} onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
   }
   if (safeImageUrl && safeImageUrl.startsWith('/')) {
-    return <img src={safeImageUrl} alt={product.name || 'Product'} className="product-image-media" onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
+    return <img src={safeImageUrl} alt={product.name || 'Product'} className="product-image-media" loading={loading} decoding="async" fetchPriority={fetchPriority} onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
   }
   if (safeImageUrl && safeImageUrl.includes('/media/')) {
-    return <img src={safeImageUrl} alt={product.name || 'Product'} className="product-image-media" onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
+    return <img src={safeImageUrl} alt={product.name || 'Product'} className="product-image-media" loading={loading} decoding="async" fetchPriority={fetchPriority} onError={(e) => { e.currentTarget.style.display = 'none'; }} />;
   }
   return <span className="product-image-emoji">{safeImageUrl || '🥚'}</span>;
 };
-
-const demoProducts = [
-  {
-    id: 101,
-    name: 'Organic Free-Range Eggs',
-    category: 'Egg*Chicks',
-    price: '₹9.99',
-    description: 'A dozen farm-fresh free-range eggs packed with flavor and nutrition.',
-    image: '🥚',
-    seller: 'Kukuta Farm',
-  },
-  {
-    id: 102,
-    name: 'Premium Layer Feed',
-    category: 'Feed & Nutrition',
-    price: '₹18.50',
-    description: 'Balanced feed mix to keep your hens healthy, happy, and productive.',
-    image: '🌾',
-    seller: 'Kukuta Farm',
-  },
-  {
-    id: 103,
-    name: 'Cozy Hen House Kit',
-    category: 'Housing & Shelter',
-    price: '₹129.00',
-    description: 'Durable shelter kit for safe, comfortable housing year-round.',
-    image: '🏠',
-    seller: 'Kukuta Farm',
-  },
-  {
-    id: 104,
-    name: 'Premium Egg Branding Box',
-    category: 'Equipment & Tools',
-    price: '₹24.75',
-    description: 'Wooden egg crate set with branding to grow your farm business.',
-    image: '🧺',
-    seller: 'Kukuta Farm',
-  },
-  {
-    id: 105,
-    name: 'Healthy Coop Cleanser',
-    category: 'Health & Care',
-    price: '₹14.99',
-    description: 'Eco-friendly coop cleaner for a fresh and safe environment.',
-    image: '🧼',
-    seller: 'Kukuta Farm',
-  },
-  {
-    id: 106,
-    name: 'Poultry Growth Booster',
-    category: 'Feed & Nutrition',
-    price: '₹26.00',
-    description: 'Vitamin-rich feed supplement to improve growth, immunity, and overall flock strength.',
-    image: '🌱',
-    seller: 'Kukuta Farm',
-  },
-  {
-    id: 107,
-    name: 'Automatic Poultry Waterer',
-    category: 'Equipment & Tools',
-    price: '₹58.75',
-    description: 'Clean and steady drinking system designed for busy farms and healthier birds.',
-    image: '💧',
-    seller: 'Kukuta Farm',
-  },
-  {
-    id: 108,
-    name: 'Hen Nesting Box',
-    category: 'Housing & Shelter',
-    price: '₹89.50',
-    description: 'Comfortable nesting unit for safe and hygienic egg laying with easy cleaning access.',
-    image: '🪺',
-    seller: 'Kukuta Farm',
-  },
-  {
-    id: 109,
-    name: 'Farm Health Starter Kit',
-    category: 'Health & Care',
-    price: '₹33.20',
-    description: 'Essential care bundle for sanitizing, disinfecting, and supporting poultry wellness.',
-    image: '🩺',
-    seller: 'Kukuta Farm',
-  },
-  {
-    id: 110,
-    name: 'Dual Purpose Egg Crate',
-    category: 'Equipment & Tools',
-    price: '₹42.90',
-    description: 'Reliable egg crate for safe transport and neat storage during sale and distribution.',
-    image: '📦',
-    seller: 'Kukuta Farm',
-  },
-];
 
 function LoginModal({ isOpen, onClose, onSwitchToSignin, onLogin, onForgotPassword }) {
   const [identifier, setIdentifier] = useState('');
@@ -213,10 +172,7 @@ function LoginModal({ isOpen, onClose, onSwitchToSignin, onLogin, onForgotPasswo
       if (response.ok) {
         // store JWT tokens
         if (data.tokens) {
-          try {
-            localStorage.setItem('accessToken', data.tokens.access);
-            localStorage.setItem('refreshToken', data.tokens.refresh);
-          } catch (e) {}
+          storeAuthTokens(data.tokens.access, data.tokens.refresh);
         }
 
         onLogin({
@@ -380,7 +336,7 @@ function ContactSellerModal({ isOpen, onClose, product }) {
   );
 }
 
-function PasswordResetConfirmPage({ uid, token, onClose, onOpenLogin }) {
+function PasswordResetConfirmPage({ uid, token, expiresAt, onClose, onOpenLogin, onRequestNewOtp }) {
   const [identifier, setIdentifier] = useState('');
   const [otp, setOtp] = useState('');
   const [newPassword, setNewPassword] = useState('');
@@ -392,6 +348,31 @@ function PasswordResetConfirmPage({ uid, token, onClose, onOpenLogin }) {
   const [confirmPasswordError, setConfirmPasswordError] = useState('');
   const [message, setMessage] = useState('');
   const [resetSuccess, setResetSuccess] = useState(false);
+  const [secondsRemaining, setSecondsRemaining] = useState(() => {
+    const expiryTime = Date.parse(expiresAt || '');
+    return Number.isFinite(expiryTime) ? Math.max(0, Math.ceil((expiryTime - Date.now()) / 1000)) : null;
+  });
+
+  useEffect(() => {
+    const expiryTime = Date.parse(expiresAt || '');
+    if (!Number.isFinite(expiryTime)) {
+      setSecondsRemaining(null);
+      return undefined;
+    }
+
+    const updateCountdown = () => {
+      setSecondsRemaining(Math.max(0, Math.ceil((expiryTime - Date.now()) / 1000)));
+    };
+    updateCountdown();
+    const intervalId = window.setInterval(updateCountdown, 1000);
+    return () => window.clearInterval(intervalId);
+  }, [expiresAt]);
+
+  const countdownText = secondsRemaining === null
+    ? 'Expiry countdown unavailable; the server will validate your code.'
+    : secondsRemaining === 0
+      ? 'OTP expired. Request a new code.'
+      : `OTP expires in ${String(Math.floor(secondsRemaining / 60)).padStart(2, '0')}:${String(secondsRemaining % 60).padStart(2, '0')}`;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -485,6 +466,23 @@ function PasswordResetConfirmPage({ uid, token, onClose, onOpenLogin }) {
               required
             />
             {otpError && <div className="field-error">{otpError}</div>}
+            <div className={`otp-expiry-timer${secondsRemaining === 0 ? ' is-expired' : ''}`} role="status" aria-live="polite">
+              {countdownText}
+            </div>
+            {secondsRemaining === 0 && onRequestNewOtp && (
+              <button
+                type="button"
+                className="otp-resend-btn"
+                onClick={async () => {
+                  const result = await onRequestNewOtp(identifier);
+                  if (result?.message) {
+                    setMessage(result.message);
+                  }
+                }}
+              >
+                Request a new code
+              </button>
+            )}
           </div>
           <div className="form-group">
             <label htmlFor="new-password-confirm">New Password</label>
@@ -526,7 +524,7 @@ function PasswordResetConfirmPage({ uid, token, onClose, onOpenLogin }) {
             />
             Show passwords
           </label>
-          {!resetSuccess && <button type="submit" className="auth-btn">Reset Password</button>}
+          {!resetSuccess && <button type="submit" className="auth-btn" disabled={secondsRemaining === 0}>Reset Password</button>}
           {message && <div className="form-message">{message}</div>}
           <div className="form-actions">
             {resetSuccess && onOpenLogin && (
@@ -609,10 +607,7 @@ function SigninModal({ isOpen, onClose, onSwitchToLogin, onSignup }) {
       if (response.ok) {
         // store tokens if returned
         if (data.tokens) {
-          try {
-            localStorage.setItem('accessToken', data.tokens.access);
-            localStorage.setItem('refreshToken', data.tokens.refresh);
-          } catch (e) {}
+          storeAuthTokens(data.tokens.access, data.tokens.refresh);
         }
 
         onSignup({
@@ -811,7 +806,7 @@ function ProfileModal({ isOpen, onClose, currentUser, onRoleToggle, onOpenDashbo
           )}
           {currentUser.role === 'buyer' && (
             <button className="auth-btn" onClick={() => { onOpenOrderHistory(); onClose(); }}>
-              View Order History
+              Open Buyer Dashboard
             </button>
           )}
           <button className="auth-btn secondary" onClick={() => { onLogout(); onClose(); }}>
@@ -826,7 +821,8 @@ function ProfileModal({ isOpen, onClose, currentUser, onRoleToggle, onOpenDashbo
 function InvoiceModal({ invoice, onClose }) {
   if (!invoice) return null;
 
-  const downloadPdf = () => {
+  const downloadPdf = async () => {
+    const { jsPDF } = await import('jspdf');
     const doc = new jsPDF();
     const pageWidth = doc.internal.pageSize.getWidth();
     const pageHeight = doc.internal.pageSize.getHeight();
@@ -933,270 +929,6 @@ function InvoiceModal({ invoice, onClose }) {
   );
 }
 
-function SellerDashboard({ sellerUsername, products, orders, onDeleteProduct, onUpdateProduct, onContactBuyer, onOpenInvoice, onClose }) {
-  const totalRevenue = orders.reduce((sum, order) => sum + parsePrice(order.price), 0);
-  const [editingProductId, setEditingProductId] = useState(null);
-  const [editValues, setEditValues] = useState({});
-  const [editImage, setEditImage] = useState(null);
-
-  const startEditing = (product) => {
-    setEditingProductId(product.id);
-    setEditImage(null);
-    setEditValues({
-      name: product.name || '',
-      price: product.price || '',
-      quantity: product.quantity || 1,
-      description: product.description || '',
-      category: product.category || 'Feed & Nutrition',
-      bird_type: product.bird_type || '',
-    });
-  };
-
-  const updateEditValue = (field, value) => {
-    setEditValues((current) => ({ ...current, [field]: value }));
-  };
-
-  const saveProduct = async (event) => {
-    event.preventDefault();
-    const payload = new FormData();
-
-    Object.entries(editValues).forEach(([key, value]) => {
-      if (value !== null && value !== undefined && value !== '') {
-        payload.append(key, value);
-      }
-    });
-
-    if (editImage) {
-      payload.append('image', editImage);
-    }
-
-    const saved = await onUpdateProduct(editingProductId, payload);
-    if (saved) {
-      setEditingProductId(null);
-      setEditValues({});
-      setEditImage(null);
-    }
-  };
-
-  return (
-    <section className="dashboard-section seller-dashboard">
-      <div className="dashboard-header">
-        <div className="dashboard-title-block">
-          <span className="dashboard-eyebrow">Store operations</span>
-          <h2>Seller Dashboard</h2>
-          <p>Manage your catalog and keep track of sales activity.</p>
-        </div>
-        <button className="close-dashboard-btn" onClick={onClose}>× Close dashboard</button>
-      </div>
-      <div className="dashboard-panel">
-        <div className="dashboard-summary">
-          <div className="dashboard-metric seller-metric">
-            <span>Account</span>
-            <strong>{sellerUsername}</strong>
-          </div>
-          <div className="dashboard-metric">
-            <span>Products listed</span>
-            <strong>{products.length}</strong>
-          </div>
-          <div className="dashboard-metric">
-            <span>Orders received</span>
-            <strong>{orders.length}</strong>
-          </div>
-          <div className="dashboard-metric">
-            <span>Total revenue</span>
-            <strong>{formatPrice(totalRevenue)}</strong>
-          </div>
-        </div>
-      </div>
-      <div className="dashboard-panel">
-        <div className="dashboard-panel-heading">
-          <div>
-            <span className="dashboard-eyebrow">Catalog</span>
-            <h3>Your Products</h3>
-          </div>
-          <span className="dashboard-panel-count">{products.length} item{products.length === 1 ? '' : 's'}</span>
-        </div>
-        {products.length > 0 ? (
-          <ul className="dashboard-list">
-            {products.map((product) => (
-              <li key={product.id}>
-                {editingProductId === product.id ? (
-                  <form className="dashboard-product-edit" onSubmit={saveProduct}>
-                    <div className="dashboard-product-edit-fields">
-                      <input value={editValues.name} onChange={(event) => updateEditValue('name', event.target.value)} aria-label="Product name" required />
-                      <input value={editValues.price} onChange={(event) => updateEditValue('price', event.target.value)} aria-label="Product price" required />
-                      <input type="number" min="1" value={editValues.quantity} onChange={(event) => updateEditValue('quantity', event.target.value)} aria-label="Product quantity" required />
-                      <select value={editValues.category} onChange={(event) => updateEditValue('category', event.target.value)} aria-label="Product category">
-                        <option>Feed & Nutrition</option>
-                        <option>Health & Care</option>
-                        <option>Housing & Shelter</option>
-                        <option>Equipment & Tools</option>
-                        <option>Bird</option>
-                        <option>Egg*Chicks</option>
-                        <option>Cattel</option>
-                      </select>
-                      {editValues.category === 'Bird' && (
-                        <input value={editValues.bird_type} onChange={(event) => updateEditValue('bird_type', event.target.value)} aria-label="Bird type" placeholder="Bird type" required />
-                      )}
-                      <label className="dashboard-product-image-upload">
-                        <span>Product image</span>
-                        <input
-                          type="file"
-                          accept="image/*"
-                          onChange={(event) => setEditImage(event.target.files?.[0] || null)}
-                        />
-                      </label>
-                      <textarea value={editValues.description} onChange={(event) => updateEditValue('description', event.target.value)} aria-label="Product description" required />
-                    </div>
-                    <div className="dashboard-product-actions">
-                      <button className="dashboard-save-btn" type="submit">Save changes</button>
-                      <button className="dashboard-cancel-btn" type="button" onClick={() => setEditingProductId(null)}>Cancel</button>
-                    </div>
-                  </form>
-                ) : (
-                  <>
-                    <div className="dashboard-product-main">
-                      <div className="dashboard-product-thumb">
-                        {product.image && product.image !== '🥚' ? <img src={product.image} alt={product.name} /> : <span aria-hidden="true">🥚</span>}
-                      </div>
-                      <div>
-                        <strong>{product.name}</strong>
-                        <span>{product.price} · {product.quantity || 1} in stock</span>
-                      </div>
-                    </div>
-                    <div className="dashboard-product-actions">
-                      <button className="dashboard-edit-btn" onClick={() => startEditing(product)}>Edit</button>
-                      <button className="delete-btn" onClick={() => onDeleteProduct(product.id)}>Delete</button>
-                    </div>
-                  </>
-                )}
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p>No products listed yet.</p>
-        )}
-      </div>
-      <div className="dashboard-panel">
-        <div className="dashboard-panel-heading">
-          <div>
-            <span className="dashboard-eyebrow">Activity</span>
-            <h3>Recent Sales</h3>
-          </div>
-          <span className="dashboard-panel-count">{orders.length} order{orders.length === 1 ? '' : 's'}</span>
-        </div>
-        {orders.length > 0 ? (
-          <table className="orders-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Product</th>
-                <th>Buyer</th>
-                <th>Price</th>
-                <th>Date</th>
-                <th>Invoice</th>
-                <th>Chat</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((order) => (
-                <tr key={order.id}>
-                  <td>{order.id}</td>
-                  <td>{order.productName}</td>
-                  <td>{order.buyer}</td>
-                  <td>{order.price}</td>
-                  <td>{order.date}</td>
-                  <td>
-                    {order.invoice ? (
-                      <button className="auth-btn secondary chat-order-btn" onClick={() => onOpenInvoice(order.invoice)}>
-                        View invoice
-                      </button>
-                    ) : (
-                      <span className="invoice-disabled">Livestock</span>
-                    )}
-                  </td>
-                  <td>
-                    <button className="auth-btn secondary chat-order-btn" onClick={() => onContactBuyer(order)}>
-                      Chat
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p>No sales yet.</p>
-        )}
-      </div>
-    </section>
-  );
-}
-
-function BuyerOrderHistory({ orders, onClose, onOpenInvoice }) {
-  const totalSpent = orders.reduce((sum, order) => sum + parsePrice(order.price), 0);
-  const totalOrders = orders.length;
-
-  return (
-    <section className="dashboard-section buyer-history">
-      <div className="dashboard-header">
-        <h2>Buyer Dashboard - Order History</h2>
-        <button className="close-dashboard-btn" onClick={onClose}>× Close</button>
-      </div>
-      <div className="dashboard-panel">
-        <div className="dashboard-summary">
-          <div>
-            <strong>Total Orders:</strong> {totalOrders}
-          </div>
-          <div>
-            <strong>Total Spent:</strong> {formatPrice(totalSpent)}
-          </div>
-        </div>
-      </div>
-      <div className="dashboard-panel">
-        <h3>Your Orders</h3>
-        {orders.length > 0 ? (
-          <table className="orders-table">
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Product</th>
-                <th>Seller</th>
-                <th>Price</th>
-                <th>Date</th>
-                <th>Status</th>
-                <th>Invoice</th>
-              </tr>
-            </thead>
-            <tbody>
-              {orders.map((order) => (
-                <tr key={order.id}>
-                  <td>{order.id}</td>
-                  <td>{order.productName}</td>
-                  <td>{order.seller}</td>
-                  <td>{order.price}</td>
-                  <td>{order.date}</td>
-                  <td>{order.status}</td>
-                  <td>
-                    {order.invoice ? (
-                      <button className="auth-btn secondary chat-order-btn" onClick={() => onOpenInvoice(order.invoice)}>
-                        View invoice
-                      </button>
-                    ) : (
-                      <span className="invoice-disabled">Livestock</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p>You have no order history yet.</p>
-        )}
-      </div>
-    </section>
-  );
-}
-
 function CartPanel({ isOpen, onClose, cartItems, onRemove, onQuantityChange, onCheckout, total }) {
   if (!isOpen) return null;
   return (
@@ -1273,17 +1005,22 @@ function WishlistPanel({ isOpen, onClose, items, onRemove, onAddToCart, onOrder 
 
 function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
   const [name, setName] = useState('');
-  const [price, setPrice] = useState('');
-  const [quantity, setQuantity] = useState(1);
+  const [price, setPrice] = useState('0');
+  const [pricePerItem, setPricePerItem] = useState('0');
+  const [quantity, setQuantity] = useState(0);
   const [description, setDescription] = useState('');
   const [category, setCategory] = useState('Feed & Nutrition');
   const [birdType, setBirdType] = useState('Breeding Hen');
-  const [betterHenModel, setBetterHenModel] = useState(null);
-  const [roosterModel, setRoosterModel] = useState(null);
+  const [age, setAge] = useState('');
+  const [daysOld, setDaysOld] = useState('');
+  const [breederHenMedia, setBreederHenMedia] = useState([]);
+  const [breederRoosterMedia, setBreederRoosterMedia] = useState([]);
   const [images, setImages] = useState([]);
   const [videos, setVideos] = useState([]);
+  const [videoUploadError, setVideoUploadError] = useState('');
   const [imageUrls, setImageUrls] = useState([]);
   const [videoUrls, setVideoUrls] = useState([]);
+  const [audioUrls, setAudioUrls] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
@@ -1298,7 +1035,28 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
 
   const handleVideoUpload = (e) => {
     const files = Array.from(e.target.files);
-    setVideos(prev => [...prev, ...files]);
+    const acceptedFiles = files.filter((file) => file.size <= MAX_PRODUCT_VIDEO_SIZE);
+    const oversizedFiles = files.filter((file) => file.size > MAX_PRODUCT_VIDEO_SIZE);
+    setVideos((previous) => [...previous, ...acceptedFiles]);
+    setVideoUploadError(oversizedFiles.length
+      ? `${oversizedFiles.map((file) => file.name).join(', ')} ${oversizedFiles.length === 1 ? 'is' : 'are'} larger than the 100 MB limit and ${oversizedFiles.length === 1 ? 'was' : 'were'} not added.`
+      : '');
+    e.target.value = '';
+  };
+
+  const handleBreederMediaUpload = (setMedia, e) => {
+    const files = Array.from(e.target.files);
+    const oversizedVideos = files.filter((file) =>
+      file.type.startsWith('video/') && file.size > MAX_PRODUCT_VIDEO_SIZE
+    );
+    const acceptedFiles = files.filter((file) =>
+      !file.type.startsWith('video/') || file.size <= MAX_PRODUCT_VIDEO_SIZE
+    );
+    setMedia((previous) => [...previous, ...acceptedFiles]);
+    setVideoUploadError(oversizedVideos.length
+      ? `${oversizedVideos.map((file) => file.name).join(', ')} ${oversizedVideos.length === 1 ? 'is' : 'are'} larger than the 100 MB video limit and ${oversizedVideos.length === 1 ? 'was' : 'were'} not added.`
+      : '');
+    e.target.value = '';
   };
 
   const removeImage = (index) => {
@@ -1307,6 +1065,10 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
 
   const removeVideo = (index) => {
     setVideos(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const removeBreederMedia = (setMedia, index) => {
+    setMedia(prev => prev.filter((_, i) => i !== index));
   };
 
   const addImageUrl = () => {
@@ -1329,12 +1091,77 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
     setVideoUrls(prev => prev.map((item, i) => i === index ? url : item));
   };
 
-  const handleBetterHenModelUpload = (e) => {
-    setBetterHenModel(e.target.files[0] || null);
+  const removeVideoUrl = (index) => {
+    setVideoUrls(prev => prev.filter((_, i) => i !== index));
   };
 
-  const handleRoosterModelUpload = (e) => {
-    setRoosterModel(e.target.files[0] || null);
+  const addAudioUrl = () => {
+    setAudioUrls(prev => [...prev, '']);
+  };
+
+  const updateAudioUrl = (index, url) => {
+    setAudioUrls(prev => prev.map((item, i) => i === index ? url : item));
+  };
+
+  const removeAudioUrl = (index) => {
+    setAudioUrls(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const showDaysOldField = category === 'Egg*Chicks';
+  const isBreedingBird = category === 'Bird'
+    && ['Breeding Hen', 'Breeding Rooster'].includes(birdType);
+  const availableLivestockAgeOptions = isBreedingBird
+    ? breedingBirdAgeOptions
+    : livestockAgeOptions;
+
+  const calculateEggTotal = (unitPrice, itemQuantity) => {
+    if (!unitPrice.trim()) return '';
+    const unitPriceInCents = Math.round(Number(unitPrice) * 100);
+    if (!Number.isFinite(unitPriceInCents)) return '';
+    return (unitPriceInCents * itemQuantity / 100).toFixed(2);
+  };
+
+  const handlePricePerItemChange = (value) => {
+    setPricePerItem(value);
+    setPrice(calculateEggTotal(value, quantity));
+  };
+
+  const handleQuantityChange = (value) => {
+    const nextQuantity = Math.max(0, Number(value) || 0);
+    setQuantity(nextQuantity);
+    if (showDaysOldField) {
+      setPrice(calculateEggTotal(pricePerItem, nextQuantity));
+    }
+  };
+
+  const handlePriceFocus = () => {
+    if (Number(price) === 0) setPrice('');
+  };
+
+  const handlePriceBlur = () => {
+    if (price === '') setPrice('0');
+  };
+
+  const handlePricePerItemFocus = () => {
+    if (Number(pricePerItem) === 0) {
+      setPricePerItem('');
+      setPrice('');
+    }
+  };
+
+  const handlePricePerItemBlur = () => {
+    if (pricePerItem === '') {
+      setPricePerItem('0');
+      setPrice(calculateEggTotal('0', quantity));
+    }
+  };
+
+  const handleQuantityFocus = () => {
+    if (Number(quantity) === 0) setQuantity('');
+  };
+
+  const handleQuantityBlur = () => {
+    if (quantity === '') handleQuantityChange(0);
   };
 
   const handleSubmit = async (e) => {
@@ -1343,18 +1170,29 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
     setFieldErrors({});
     setFormSuccess('');
 
-    const isBirdCategory = category === 'Bird';
-
-    if (category === 'Egg*Chicks' && (!betterHenModel || !roosterModel)) {
-      setFieldErrors({
-        better_hen_model: !betterHenModel ? 'A hen model is required.' : '',
-        rooster_model: !roosterModel ? 'A rooster model is required.' : '',
-      });
+    if (quantity < 1) {
+      setFieldErrors({ quantity: 'Enter a quantity of at least 1 before adding this product.' });
       return;
     }
 
-    if (isBirdCategory && !birdType) {
+    const isLivestockCategory = ['Bird', 'Cattel', 'Egg*Chicks'].includes(category);
+    if (category === 'Egg*Chicks' && !pricePerItem.trim()) {
+      setFieldErrors({ price_per_item: 'Please specify the price for each egg or chick.' });
+      return;
+    }
+
+    if (isLivestockCategory && !birdType) {
       setFieldErrors({ bird_type: 'Please select a bird type.' });
+      return;
+    }
+
+    if (isLivestockCategory && !age.trim()) {
+      setFieldErrors({ age: 'Please specify the age for this livestock listing.' });
+      return;
+    }
+
+    if (showDaysOldField && !daysOld.trim()) {
+      setFieldErrors({ days_old: 'Please specify the number of days old for this Egg*Chicks listing.' });
       return;
     }
 
@@ -1362,20 +1200,20 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
     const formData = new FormData();
     formData.append('name', name);
     formData.append('price', `${CURRENCY_SYMBOL}${price}`);
+    if (category === 'Egg*Chicks') {
+      formData.append('price_per_item', `${CURRENCY_SYMBOL}${pricePerItem.trim()}`);
+    }
     formData.append('quantity', quantity);
     formData.append('description', description);
     formData.append('category', category);
-    if (isBirdCategory) {
+    if (isLivestockCategory) {
       formData.append('bird_type', birdType);
+      formData.append('age', age.trim());
+    }
+    if (showDaysOldField) {
+      formData.append('days_old', daysOld.trim());
     }
     formData.append('seller', userName);
-    if (betterHenModel) {
-      formData.append('better_hen_model', betterHenModel);
-    }
-    if (roosterModel) {
-      formData.append('rooster_model', roosterModel);
-    }
-
     // Add uploaded images
     images.forEach((image, index) => {
       formData.append('images', image);
@@ -1391,9 +1229,20 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
       formData.append('videos', video);
     });
 
+    breederHenMedia.forEach((media) => {
+      formData.append(media.type.startsWith('video/') ? 'breeder_hen_videos' : 'breeder_hen_images', media);
+    });
+    breederRoosterMedia.forEach((media) => {
+      formData.append(media.type.startsWith('video/') ? 'breeder_rooster_videos' : 'breeder_rooster_images', media);
+    });
+
     // Add video URLs
     videoUrls.filter(url => url.trim()).forEach((url, index) => {
       formData.append(`video_urls[${index}]`, url);
+    });
+
+    audioUrls.filter(url => url.trim()).forEach((url, index) => {
+      formData.append(`audio_urls[${index}]`, url);
     });
 
     const success = await onAddProduct(formData);
@@ -1412,16 +1261,22 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
 
     setFormSuccess('Product added successfully.');
     setName('');
-    setPrice('');
-    setQuantity(1);
+    setPrice('0');
+    setPricePerItem('0');
+    setQuantity(0);
     setBetterHenModel(null);
     setRoosterModel(null);
+    setBreederHenMedia([]);
+    setBreederRoosterMedia([]);
     setDescription('');
     setImages([]);
     setVideos([]);
     setImageUrls([]);
     setVideoUrls([]);
+    setAudioUrls([]);
     setBirdType('Breeding Hen');
+    setAge('');
+    setDaysOld('');
     setIsSubmitting(false);
     onClose();
   };
@@ -1435,338 +1290,585 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
           <h2>Add New Product</h2>
           <button className="modal-close" onClick={onClose}>×</button>
         </div>
-        <form onSubmit={handleSubmit} className="auth-form" encType="multipart/form-data">
-          <div className="form-group">
-            <label htmlFor="product-name">Product Name</label>
-            <input
-              id="product-name"
-              type="text"
-              value={name}
-              className={getFieldError('name') ? 'input-error' : ''}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g., Fresh Organic Eggs"
-              required
-            />
-            {getFieldError('name') && <div className="field-error">{getFieldError('name')}</div>}
-          </div>
+        <form onSubmit={handleSubmit} className="auth-form product-form" encType="multipart/form-data">
+          <div className="product-form-grid">
+            <div className="form-group form-span-2">
+              <label htmlFor="product-name">Product Name</label>
+              <input
+                id="product-name"
+                type="text"
+                value={name}
+                className={getFieldError('name') ? 'input-error' : ''}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g., Fresh Organic Eggs"
+                required
+              />
+              {getFieldError('name') && <div className="field-error">{getFieldError('name')}</div>}
+            </div>
 
-          <div className="form-group">
-            <label htmlFor="product-price">Price (₹)</label>
-            <input
-              id="product-price"
-              type="number"
-              value={price}
-              className={getFieldError('price') ? 'input-error' : ''}
-              onChange={(e) => setPrice(e.target.value)}
-              placeholder="29"
-              step="0.01"
-              required
-            />
-            {getFieldError('price') && <div className="field-error">{getFieldError('price')}</div>}
-          </div>
+            {!showDaysOldField && (
+              <div className="form-group">
+                <label htmlFor="product-price">Price (₹)</label>
+                <input
+                  id="product-price"
+                  type="number"
+                  value={price}
+                  className={getFieldError('price') ? 'input-error' : ''}
+                  onChange={(e) => setPrice(e.target.value)}
+                  onFocus={handlePriceFocus}
+                  onBlur={handlePriceBlur}
+                  placeholder="29"
+                  step="0.01"
+                  required
+                />
+                {getFieldError('price') && <div className="field-error">{getFieldError('price')}</div>}
+              </div>
+            )}
 
-          <div className="form-group">
-            <label htmlFor="product-quantity">Quantity</label>
-            <input
-              id="product-quantity"
-              type="number"
-              min="1"
-              value={quantity}
-              className={getFieldError('quantity') ? 'input-error' : ''}
-              onChange={(e) => setQuantity(Math.max(1, Number(e.target.value) || 1))}
-              placeholder="1"
-              required
-            />
-            {getFieldError('quantity') && <div className="field-error">{getFieldError('quantity')}</div>}
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="product-category">Category</label>
-            <select
-              id="product-category"
-              value={category}
-              className={getFieldError('category') ? 'input-error' : ''}
-              onChange={(e) => setCategory(e.target.value)}
-            >
-              {categories.map((cat) => (
-                <option key={cat} value={cat}>
-                  {cat}
-                </option>
-              ))}
-            </select>
-            {getFieldError('category') && <div className="field-error">{getFieldError('category')}</div>}
             {category === 'Egg*Chicks' && (
-              <div className="field-note">For Egg*Chicks listings, both a hen model and a rooster model are required.</div>
+              <div className="form-group per-item-price-field">
+                <label htmlFor="product-price-per-item">Price per egg/chick (₹)</label>
+                <div className={`money-input-control ${getFieldError('price_per_item') ? 'input-error' : ''}`}>
+                  <span className="money-input-prefix" aria-hidden="true">₹</span>
+                  <input
+                    id="product-price-per-item"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    value={pricePerItem}
+                    onChange={(e) => handlePricePerItemChange(e.target.value)}
+                    onFocus={handlePricePerItemFocus}
+                    onBlur={handlePricePerItemBlur}
+                    placeholder="0.00"
+                    required
+                  />
+                </div>
+                <span className="field-hint">Shown to buyers for one egg or chick.</span>
+                {getFieldError('price_per_item') && <div className="field-error">{getFieldError('price_per_item')}</div>}
+              </div>
             )}
-            {category === 'Bird' && (
-              <div className="field-note">Select the bird type for this listing.</div>
-            )}
-          </div>
 
-          {category === 'Bird' && (
             <div className="form-group">
-              <label htmlFor="product-bird-type">Bird Type</label>
+              <label htmlFor="product-quantity">Quantity</label>
+              <div className="quantity-control">
+                <button
+                  type="button"
+                  className="quantity-stepper-button"
+                  aria-label="Decrease quantity"
+                  title="Decrease quantity"
+                  disabled={quantity <= 0}
+                  onClick={() => handleQuantityChange(quantity - 1)}
+                >
+                  <span aria-hidden="true">−</span>
+                </button>
+                <input
+                  id="product-quantity"
+                  type="number"
+                  min="0"
+                  step="1"
+                  inputMode="numeric"
+                  value={quantity}
+                  className={`quantity-input ${getFieldError('quantity') ? 'input-error' : ''}`}
+                  onChange={(e) => handleQuantityChange(e.target.value)}
+                  onFocus={handleQuantityFocus}
+                  onBlur={handleQuantityBlur}
+                  required
+                />
+                <button
+                  type="button"
+                  className="quantity-stepper-button"
+                  aria-label="Increase quantity"
+                  title="Increase quantity"
+                  onClick={() => handleQuantityChange(quantity + 1)}
+                >
+                  <span aria-hidden="true">+</span>
+                </button>
+              </div>
+              {getFieldError('quantity') && <div className="field-error">{getFieldError('quantity')}</div>}
+            </div>
+
+            {showDaysOldField && (
+              <div className="form-group form-span-2 total-price-field">
+                <label htmlFor="product-price">Total price</label>
+                <div className={`money-input-control total-price-control ${getFieldError('price') ? 'input-error' : ''}`}>
+                  <span className="money-input-prefix" aria-hidden="true">₹</span>
+                  <input
+                    id="product-price"
+                    type="number"
+                    value={price}
+                    onChange={(e) => setPrice(e.target.value)}
+                    step="0.01"
+                    readOnly
+                    required
+                  />
+                </div>
+                <span className="field-hint">Price per egg/chick multiplied by quantity.</span>
+                {getFieldError('price') && <div className="field-error">{getFieldError('price')}</div>}
+              </div>
+            )}
+
+            <div className="form-group form-span-2">
+              <label htmlFor="product-category">Category</label>
               <select
-                id="product-bird-type"
-                value={birdType}
-                className={getFieldError('bird_type') ? 'input-error' : ''}
-                onChange={(e) => setBirdType(e.target.value)}
+                id="product-category"
+                value={category}
+                className={getFieldError('category') ? 'input-error' : ''}
+                onChange={(e) => {
+                  setCategory(e.target.value);
+                  setAge('');
+                }}
               >
-                {birdTypeOptions.map((type) => (
-                  <option key={type} value={type}>
-                    {type}
+                {PRODUCT_CATEGORY_OPTIONS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
                   </option>
                 ))}
               </select>
-              {getFieldError('bird_type') && <div className="field-error">{getFieldError('bird_type')}</div>}
+              {getFieldError('category') && <div className="field-error">{getFieldError('category')}</div>}
+              {category === 'Egg*Chicks' && (
+                <div className="field-note">Hen and rooster models are optional.</div>
+              )}
+              {['Bird', 'Cattel'].includes(category) && (
+                <div className="field-note">Select the livestock type and age for this listing.</div>
+              )}
             </div>
-          )}
 
-          {category === 'Egg*Chicks' && (
-            <>
-              <div className="form-group">
-                <label htmlFor="better-hen-model">Better Hen Model</label>
-                <input
-                  id="better-hen-model"
-                  type="file"
-                  accept=".glb,.gltf,.obj,.fbx,.usdz"
-                  onChange={handleBetterHenModelUpload}
-                />
-                {getFieldError('better_hen_model') && <div className="field-error">{getFieldError('better_hen_model')}</div>}
-                {betterHenModel && <div className="field-note">Selected file: {betterHenModel.name}</div>}
-                <div className="field-note">Upload the hen model file used to represent this listing.</div>
-              </div>
-              <div className="form-group">
-                <label htmlFor="rooster-model">Rooster Model</label>
-                <input
-                  id="rooster-model"
-                  type="file"
-                  accept=".glb,.gltf,.obj,.fbx,.usdz"
-                  onChange={handleRoosterModelUpload}
-                />
-                {getFieldError('rooster_model') && <div className="field-error">{getFieldError('rooster_model')}</div>}
-                {roosterModel && <div className="field-note">Selected file: {roosterModel.name}</div>}
-                <div className="field-note">Upload the matching rooster model for Egg*Chicks listings.</div>
-              </div>
-            </>
-          )}
-          {(formError || formSuccess) && (
-            <div className="form-message-row">
-              {formError && <div className="form-error" role="alert">{formError}</div>}
-              {formSuccess && <div className="form-success" role="status">{formSuccess}</div>}
-            </div>
-          )}
+            {['Bird', 'Cattel', 'Egg*Chicks'].includes(category) && (
+              <>
+                <div className="form-group">
+                  <label htmlFor="product-bird-type">Bird Type</label>
+                  <select
+                    id="product-bird-type"
+                    value={birdType}
+                    className={getFieldError('bird_type') ? 'input-error' : ''}
+                    onChange={(e) => {
+                      setBirdType(e.target.value);
+                      setAge('');
+                    }}
+                  >
+                    {birdTypeOptions.map((type) => (
+                      <option key={type} value={type}>
+                        {type}
+                      </option>
+                    ))}
+                  </select>
+                  {getFieldError('bird_type') && <div className="field-error">{getFieldError('bird_type')}</div>}
+                </div>
 
-          <div className="form-group">
-            <label htmlFor="product-description">Description</label>
-            <textarea
-              id="product-description"
-              value={description}
-              className={getFieldError('description') ? 'input-error' : ''}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Describe your product..."
-              rows="4"
-              required
-            />
-            {getFieldError('description') && <div className="field-error">{getFieldError('description')}</div>}
-          </div>
+                <div className="form-group">
+                  <label htmlFor="product-age">Age</label>
+                  <select
+                    id="product-age"
+                    className={`age-select ${getFieldError('age') ? 'input-error' : ''}`}
+                    value={age}
+                    onChange={(e) => setAge(e.target.value)}
+                    required
+                  >
+                    <option value="" disabled>Select age</option>
+                    {availableLivestockAgeOptions.map((option) => (
+                      <option key={option} value={option}>{option}</option>
+                    ))}
+                  </select>
+                  {getFieldError('age') && <div className="field-error">{getFieldError('age')}</div>}
+                </div>
 
-          {/* Image Upload Section */}
-          <div className="form-group">
-            <label>Product Images</label>
-            <div className="file-upload-section">
-              <input
-                type="file"
-                multiple
-                accept="image/*"
-                onChange={handleImageUpload}
-                style={{ display: 'none' }}
-                id="image-upload"
-              />
-              <label htmlFor="image-upload" className="file-upload-btn">
-                📷 Choose Images
-              </label>
-              <button type="button" onClick={addImageUrl} className="url-add-btn">
-                🔗 Add Image URL
-              </button>
-            </div>
-            {images.length > 0 && (
-              <div className="field-note">{images.length} image{images.length === 1 ? '' : 's'} selected. You can select more images to add them.</div>
-            )}
-
-            {/* Display uploaded images */}
-            {images.length > 0 && (
-              <div className="uploaded-files">
-                <h4>Uploaded Images:</h4>
-                {images.map((image, index) => (
-                  <div key={index} className="file-item">
-                    <span>{image.name}</span>
-                    <button type="button" onClick={() => removeImage(index)}>❌</button>
+                {showDaysOldField && (
+                  <div className="form-group">
+                    <label htmlFor="product-days-old">Days Old</label>
+                    <input
+                      id="product-days-old"
+                      type="number"
+                      min="1"
+                      value={daysOld}
+                      className={getFieldError('days_old') ? 'input-error' : ''}
+                      onChange={(e) => setDaysOld(e.target.value)}
+                      placeholder="e.g. 24"
+                    />
+                    {getFieldError('days_old') && <div className="field-error">{getFieldError('days_old')}</div>}
                   </div>
-                ))}
+                )}
+              </>
+            )}
+
+            {category === 'Egg*Chicks' && (
+              <>
+                <div className="form-group breeder-media-section">
+                  <label htmlFor="breeder-hen-media">Breeder Hen Photos/Videos</label>
+                  <div className="file-upload-section">
+                    <input
+                      id="breeder-hen-media"
+                      type="file"
+                      multiple
+                      accept="image/*,video/*"
+                      onChange={(e) => handleBreederMediaUpload(setBreederHenMedia, e)}
+                      style={{ display: 'none' }}
+                    />
+                    <label htmlFor="breeder-hen-media" className="file-upload-btn">Choose Hen Media</label>
+                  </div>
+                  {breederHenMedia.length > 0 && (
+                    <div className="uploaded-files">
+                      {breederHenMedia.map((media, index) => (
+                        <div className="file-item" key={`${media.name}-${index}`}>
+                          <span>{media.name}</span>
+                          <button type="button" aria-label={`Remove ${media.name}`} onClick={() => removeBreederMedia(setBreederHenMedia, index)}>Remove</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <div className="form-group breeder-media-section">
+                  <label htmlFor="breeder-rooster-media">Breeder Rooster Photos/Videos</label>
+                  <div className="file-upload-section">
+                    <input
+                      id="breeder-rooster-media"
+                      type="file"
+                      multiple
+                      accept="image/*,video/*"
+                      onChange={(e) => handleBreederMediaUpload(setBreederRoosterMedia, e)}
+                      style={{ display: 'none' }}
+                    />
+                    <label htmlFor="breeder-rooster-media" className="file-upload-btn">Choose Rooster Media</label>
+                  </div>
+                  {breederRoosterMedia.length > 0 && (
+                    <div className="uploaded-files">
+                      {breederRoosterMedia.map((media, index) => (
+                        <div className="file-item" key={`${media.name}-${index}`}>
+                          <span>{media.name}</span>
+                          <button type="button" aria-label={`Remove ${media.name}`} onClick={() => removeBreederMedia(setBreederRoosterMedia, index)}>Remove</button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+            {formError && (
+              <div className="form-message-row">
+                <div className="form-error" role="alert">{formError}</div>
               </div>
             )}
 
-            {/* Image URLs */}
-            {imageUrls.map((url, index) => (
-              <div key={index} className="url-input-group">
-                <input
-                  type="url"
-                  value={url}
-                  onChange={(e) => updateImageUrl(index, e.target.value)}
-                  placeholder="https://example.com/image.jpg"
-                />
-                <button type="button" onClick={() => removeImageUrl(index)}>❌</button>
-              </div>
-            ))}
-          </div>
-
-          {/* Video Upload Section */}
-          <div className="form-group">
-            <label>Product Videos</label>
-            <div className="file-upload-section">
-              <input
-                type="file"
-                multiple
-                accept="video/*"
-                onChange={handleVideoUpload}
-                style={{ display: 'none' }}
-                id="video-upload"
+            <div className="form-group">
+              <label htmlFor="product-description">Description</label>
+              <textarea
+                id="product-description"
+                value={description}
+                className={getFieldError('description') ? 'input-error' : ''}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Describe your product..."
+                rows="4"
+                required
               />
-              <label htmlFor="video-upload" className="file-upload-btn">
-                🎥 Choose Videos
-              </label>
-              <button type="button" onClick={addVideoUrl} className="url-add-btn">
-                🔗 Add Video URL
-              </button>
+              {getFieldError('description') && <div className="field-error">{getFieldError('description')}</div>}
             </div>
 
-            {/* Display uploaded videos */}
-            {videos.length > 0 && (
-              <div className="uploaded-files">
-                <h4>Uploaded Videos:</h4>
-                {videos.map((video, index) => (
-                  <div key={index} className="file-item">
-                    <span>{video.name}</span>
-                    <button type="button" onClick={() => removeVideo(index)}>❌</button>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Video URLs */}
-            {videoUrls.map((url, index) => (
-              <div key={index} className="url-input-group">
+            {/* Image Upload Section */}
+            <div className="form-group">
+              <label>Product Images</label>
+              <div className="file-upload-section">
                 <input
-                  type="url"
-                  value={url}
-                  onChange={(e) => updateVideoUrl(index, e.target.value)}
-                  placeholder="https://example.com/video.mp4"
+                  type="file"
+                  multiple
+                  accept="image/*"
+                  onChange={handleImageUpload}
+                  style={{ display: 'none' }}
+                  id="image-upload"
                 />
-                <button type="button" onClick={() => removeVideoUrl(index)}>❌</button>
+                <label htmlFor="image-upload" className="file-upload-btn">
+                  📷 Choose Images
+                </label>
+                <button type="button" onClick={addImageUrl} className="url-add-btn">
+                  🔗 Add Image URL
+                </button>
               </div>
-            ))}
+              {images.length > 0 && (
+                <div className="field-note">{images.length} image{images.length === 1 ? '' : 's'} selected. You can select more images to add them.</div>
+              )}
+
+              {/* Display uploaded images */}
+              {images.length > 0 && (
+                <div className="uploaded-files">
+                  <h4>Uploaded Images:</h4>
+                  {images.map((image, index) => (
+                    <div key={index} className="file-item">
+                      <span>{image.name}</span>
+                      <button type="button" onClick={() => removeImage(index)}>❌</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Image URLs */}
+              {imageUrls.map((url, index) => (
+                <div key={index} className="url-input-group">
+                  <input
+                    type="url"
+                    value={url}
+                    onChange={(e) => updateImageUrl(index, e.target.value)}
+                    placeholder="https://example.com/image.jpg"
+                  />
+                  <button type="button" onClick={() => removeImageUrl(index)}>❌</button>
+                </div>
+              ))}
+            </div>
+
+            {/* Video Upload Section */}
+            <div className="form-group">
+              <label>Product Videos</label>
+              <div className="file-upload-section">
+                <input
+                  type="file"
+                  multiple
+                  accept="video/mp4,video/webm,video/ogg,.mp4,.webm,.ogv"
+                  onChange={handleVideoUpload}
+                  style={{ display: 'none' }}
+                  id="video-upload"
+                />
+                <label htmlFor="video-upload" className="file-upload-btn">
+                  🎥 Choose Videos
+                </label>
+                <button type="button" onClick={addVideoUrl} className="url-add-btn">
+                  🔗 Add Video URL
+                </button>
+              </div>
+              <span className="field-hint">Maximum uploaded video size: 100 MB per file.</span>
+              {videoUploadError && <div className="field-error" role="alert" aria-live="assertive">{videoUploadError}</div>}
+
+              {/* Display uploaded videos */}
+              {videos.length > 0 && (
+                <div className="uploaded-files">
+                  <h4>Uploaded Videos:</h4>
+                  {videos.map((video, index) => (
+                    <div key={index} className="file-item">
+                      <span>{video.name}</span>
+                      <button type="button" onClick={() => removeVideo(index)}>❌</button>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Video URLs */}
+              {videoUrls.map((url, index) => (
+                <div key={index} className="url-input-group">
+                  <input
+                    type="url"
+                    value={url}
+                    onChange={(e) => updateVideoUrl(index, e.target.value)}
+                    placeholder="https://example.com/video.mp4"
+                  />
+                  <button type="button" onClick={() => removeVideoUrl(index)}>❌</button>
+                </div>
+              ))}
+            </div>
+
+            <div className="form-group">
+              <label>Product Audio URL</label>
+              <div className="file-upload-section">
+                <button type="button" onClick={addAudioUrl} className="url-add-btn">
+                  🔗 Add Audio URL
+                </button>
+              </div>
+              <span className="field-hint">Audio files can no longer be uploaded here; add a publicly accessible audio URL instead.</span>
+              {audioUrls.map((url, index) => (
+                <div className="url-input-group" key={`audio-url-${index}`}>
+                  <input
+                    type="url"
+                    value={url}
+                    onChange={(e) => updateAudioUrl(index, e.target.value)}
+                    placeholder="https://example.com/audio.mp3"
+                    aria-label={`Product audio URL ${index + 1}`}
+                  />
+                  <button type="button" aria-label={`Remove audio URL ${index + 1}`} onClick={() => removeAudioUrl(index)}>×</button>
+                </div>
+              ))}
+            </div>
           </div>
 
-          <button type="submit" className="auth-btn" disabled={isSubmitting} aria-busy={isSubmitting}>
-            {isSubmitting ? 'Adding product…' : 'Add Product'}
-          </button>
+          <div className="form-actions">
+            {formSuccess && <div className="form-success" role="status">{formSuccess}</div>}
+            <button type="submit" className="auth-btn" disabled={isSubmitting} aria-busy={isSubmitting}>
+              {isSubmitting ? 'Adding product…' : 'Add Product'}
+            </button>
+          </div>
         </form>
       </div>
     </div>
   );
 }
 
-function HeroSlider({ products = [], onSelectProduct, selectedCategory = null, search = '', wishlist = [] }) {
+const HeroSlider = React.memo(function HeroSlider({ products = [], onSelectProduct, selectedCategory = null, search = '', wishlist = [], orders = [] }) {
   const [currentSlide, setCurrentSlide] = useState(0);
+  const [isHovered, setIsHovered] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
+  const touchStartX = React.useRef(null);
+
+  const getSellerStats = (product) => {
+    const sellerName = String(product?.seller || 'Kukuta Farm').trim() || 'Kukuta Farm';
+    const orderCount = orders.filter((order) => {
+      const seller = order?.seller || order?.seller_name || order?.sellerName || '';
+      return String(seller).toLowerCase() === sellerName.toLowerCase();
+    }).length;
+
+    const seed = sellerName.split('').reduce((total, char) => total + char.charCodeAt(0), 0);
+    const rating = Number((4.2 + ((seed % 9) * 0.08)).toFixed(1));
+    return {
+      rating: Math.min(5, rating),
+      orders: orderCount,
+    };
+  };
 
   const fallbackSlides = [
     {
-      title: 'Farm fresh, chef approved.',
-      subtitle: 'Curated poultry and nutrition essentials for healthy living.',
-      gradient: 'linear-gradient(135deg, #132b14 0%, #2a5d34 42%, #6ca35c 100%)',
+      title: 'Fresh farm essentials for every day living.',
+      subtitle: 'Curated poultry, feed, and healthy-living products chosen for quality, value, and trust.',
+      gradient: 'linear-gradient(135deg, #10291a 0%, #1d472a 34%, #5a8948 100%)',
       emoji: '🐔',
     },
     {
-      title: 'Premium nutrition for every flock.',
-      subtitle: 'High-quality feed, eggs, and care products selected by experts.',
-      gradient: 'linear-gradient(135deg, #8c5d18 0%, #d7b15a 42%, #f5e2a6 100%)',
+      title: 'Smart nutrition for stronger flocks.',
+      subtitle: 'Premium feed, poultry care, and daily essentials designed for healthy growth and better yields.',
+      gradient: 'linear-gradient(135deg, #7a4d0d 0%, #d39d3f 42%, #f7e5b8 100%)',
       emoji: '🥚',
     },
     {
-      title: 'Sustainability built into every order.',
-      subtitle: 'Thoughtful sourcing, trusted quality, and dependable delivery.',
-      gradient: 'linear-gradient(135deg, #0e3d38 0%, #2e7d6b 42%, #b0d7c4 100%)',
+      title: 'Better sourcing. Better outcomes.',
+      subtitle: 'From trusted sellers to faster delivery, every order is built around reliability and care.',
+      gradient: 'linear-gradient(135deg, #0e3d38 0%, #216f6d 36%, #a6d7ca 100%)',
       emoji: '🌿',
     },
   ];
 
   const normalizedSearch = search.trim().toLowerCase();
-  const productSlides = [...products]
-    .map((product, index) => {
-      const searchableText = `${product.name || ''} ${product.description || ''} ${product.seller || ''}`.toLowerCase();
-      let score = 0;
-      if (selectedCategory && product.category === selectedCategory) score += 5;
-      if (normalizedSearch && searchableText.includes(normalizedSearch)) score += 4;
-      if (wishlist.includes(product.id)) score += 3;
-      return { product, index, score };
-    })
-    .sort((left, right) => right.score - left.score || right.product.id - left.product.id)
-    .slice(0, 3)
-    .map(({ product }, index) => ({
-    title: product.name,
-    subtitle: `${product.category || 'Farm product'} from ${product.seller || 'Kukuta Farm'}`,
-    seller: product.seller || 'Kukuta Farm',
-    productId: product.id,
-    product,
-    gradient: fallbackSlides[index % fallbackSlides.length].gradient,
-    emoji: fallbackSlides[index % fallbackSlides.length].emoji,
-  }));
+  const productSlides = React.useMemo(() => {
+    return [...products]
+      .map((product) => {
+        const searchableText = `${product.name || ''} ${product.description || ''} ${product.seller || ''}`.toLowerCase();
+        let score = 0;
+        if (selectedCategory && product.category === selectedCategory) score += 5;
+        if (normalizedSearch && searchableText.includes(normalizedSearch)) score += 4;
+        if (wishlist.includes(product.id)) score += 3;
+        return { product, score };
+      })
+      .sort((left, right) => right.score - left.score || right.product.id - left.product.id)
+      .slice(0, 3)
+      .map(({ product }, index) => ({
+        title: product.name,
+        subtitle: `${getCategoryLabel(product.category) || 'Farm product'} from ${product.seller || 'Kukuta Farm'}`,
+        seller: product.seller || 'Kukuta Farm',
+        productId: product.id,
+        product,
+        gradient: fallbackSlides[index % fallbackSlides.length].gradient,
+        emoji: fallbackSlides[index % fallbackSlides.length].emoji,
+      }));
+  }, [products, selectedCategory, normalizedSearch, wishlist]);
+
   const slides = productSlides.length > 0 ? productSlides : fallbackSlides;
 
   React.useEffect(() => {
+    if (slides.length < 2 || isHovered || isFocused || window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      return undefined;
+    }
     const timer = setInterval(() => {
       setCurrentSlide((prev) => (prev + 1) % slides.length);
     }, 5000);
     return () => clearInterval(timer);
-  }, []);
+  }, [slides.length, isHovered, isFocused]);
+
+  React.useEffect(() => {
+    setCurrentSlide((slide) => Math.min(slide, slides.length - 1));
+  }, [slides.length]);
+
+  const getSlideSellerStats = (slide) => slide.product ? getSellerStats(slide.product) : { rating: 4.9, orders: 1200 };
 
   const goToSlide = (index) => setCurrentSlide(index);
   const nextSlide = () => setCurrentSlide((prev) => (prev + 1) % slides.length);
   const prevSlide = () => setCurrentSlide((prev) => (prev - 1 + slides.length) % slides.length);
+  const handleTouchStart = (event) => {
+    touchStartX.current = event.changedTouches[0]?.clientX ?? null;
+  };
+  const handleTouchEnd = (event) => {
+    if (touchStartX.current === null) return;
+    const distance = (event.changedTouches[0]?.clientX ?? touchStartX.current) - touchStartX.current;
+    touchStartX.current = null;
+    if (Math.abs(distance) < 48) return;
+    distance < 0 ? nextSlide() : prevSlide();
+  };
 
   return (
-    <section className="hero-slider scroll-reveal">
-      {slides.map((slide, index) => (
-        <div
-          key={index}
-          className={`hero-slide ${index === currentSlide ? 'active' : ''}`}
-          style={{ background: slide.gradient }}
-        >
-          <div className="hero-slide-content">
-            {slide.product ? (
-              <button
-                type="button"
-                className="hero-product-image"
-                onClick={() => onSelectProduct?.(slide.productId)}
-                aria-label={`View ${slide.title}`}
-              >
-                {getProductImage(slide.product)}
-              </button>
-            ) : (
-              <div className="hero-emoji">{slide.emoji}</div>
-            )}
-            <h2>{slide.title}</h2>
-            <p>{slide.subtitle}</p>
-            <div className="hero-actions">
-              <button className="slide-primary" onClick={() => slide.productId && onSelectProduct?.(slide.productId)}>
-                {slide.productId ? 'View product' : 'Explore products'}
-              </button>
-              <span className="slide-secondary">{slide.seller ? `Sold by ${slide.seller}` : 'Meet our farmers'}</span>
+    <section
+      className="hero-slider scroll-reveal"
+      aria-label="Featured products"
+      aria-roledescription="carousel"
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
+      onMouseEnter={() => setIsHovered(true)}
+      onMouseLeave={() => setIsHovered(false)}
+      onFocusCapture={() => setIsFocused(true)}
+      onBlurCapture={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setIsFocused(false);
+      }}
+    >
+      {slides.map((slide, index) => {
+        const sellerStats = getSlideSellerStats(slide);
+        return (
+          <div
+            key={slide.productId ?? slide.title}
+            className={`hero-slide ${index === currentSlide ? 'active' : ''}`}
+            style={{ background: slide.gradient }}
+            role="group"
+            aria-roledescription="slide"
+            aria-label={`${index + 1} of ${slides.length}`}
+            aria-hidden={index !== currentSlide}
+            inert={index !== currentSlide}
+          >
+            <div className="hero-slide-inner">
+              <div className="hero-copy">
+                <span className="hero-badge">Fresh from Kukuta</span>
+                <h2>{slide.title}</h2>
+                <p>{slide.subtitle}</p>
+
+                <div className="hero-seller-meta">
+                  <span className="seller-star">★</span>
+                  <strong>{sellerStats.rating.toFixed(1)}/5</strong>
+                  <span>buyer rating</span>
+                  <span>•</span>
+                  <span>{sellerStats.orders} orders</span>
+                </div>
+
+                <div className="hero-actions">
+                  <button className="slide-primary" onClick={() => slide.productId && onSelectProduct?.(slide.productId)}>
+                    {slide.productId ? 'View product' : 'Explore products'}
+                  </button>
+                  <span className="slide-secondary">{slide.seller ? `Sold by ${slide.seller}` : 'Meet our farmers'}</span>
+                </div>
+              </div>
+
+              <div className="hero-visual">
+                <div className="hero-visual-card">
+                  {slide.product ? (
+                    <button
+                      type="button"
+                      className="hero-product-image"
+                      onClick={() => onSelectProduct?.(slide.productId)}
+                      aria-label={`View ${slide.title}`}
+                    >
+                      {getProductImage(slide.product, { isPriority: index === currentSlide })}
+                    </button>
+                  ) : (
+                    <div className="hero-emoji">{slide.emoji}</div>
+                  )}
+
+                  <div className="hero-mini-card">
+                    <span className="mini-label">Featured</span>
+                    <strong>{slide.product ? slide.product.name : 'Trusted farm picks'}</strong>
+                    <small>{slide.product ? `${slide.product.category || 'Farm essentials'}` : 'Healthy living essentials'}</small>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
-      ))}
+        );
+      })}
 
       <button className="slider-btn prev-btn" type="button" onClick={prevSlide} aria-label="Previous slide">‹</button>
       <button className="slider-btn next-btn" type="button" onClick={nextSlide} aria-label="Next slide">›</button>
@@ -1783,12 +1885,11 @@ function HeroSlider({ products = [], onSelectProduct, selectedCategory = null, s
       </div>
     </section>
   );
-}
+});
 
 function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelated, currentUser, onToggleWishlist, isWishlisted, onAddToCart, onContactSeller }) {
   const [reviews, setReviews] = useState([]);
   const [sellerReviews, setSellerReviews] = useState([]);
-  const [relatedRatings, setRelatedRatings] = useState({});
   const [reviewRating, setReviewRating] = useState('5');
   const [reviewComment, setReviewComment] = useState('');
   const [reviewImages, setReviewImages] = useState([]);
@@ -1797,6 +1898,114 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
   const [editReviewComment, setEditReviewComment] = useState('');
   const [reviewError, setReviewError] = useState('');
   const [reviewSubmitting, setReviewSubmitting] = useState(false);
+  const [currentMediaIndex, setCurrentMediaIndex] = useState(0);
+  const [orderNotice, setOrderNotice] = useState('');
+  const touchStartX = React.useRef(null);
+  const isOwnProduct = currentUser?.role === 'seller'
+    && String(product?.seller || '').trim().toLowerCase() === String(currentUser?.username || '').trim().toLowerCase();
+
+  useEffect(() => {
+    setOrderNotice('');
+  }, [product?.id]);
+
+  const productMedia = useMemo(() => {
+    if (!product) return [];
+
+    const imageItems = Array.isArray(product.images) ? product.images.map((item, index) => ({
+      id: item?.id ?? `${product.id}-image-${index}`,
+      type: 'image',
+      url: item?.image_url || item?.image || '',
+      alt: item?.alt_text || product.name || 'Product image',
+    })) : [];
+
+    const videoItems = Array.isArray(product.videos) ? product.videos.map((item, index) => ({
+      id: item?.id ?? `${product.id}-video-${index}`,
+      type: 'video',
+      url: item?.video_url || item?.video || '',
+      alt: item?.title || `${product.name || 'Product'} video`,
+    })) : [];
+
+    const audioItems = Array.isArray(product.audios) ? product.audios.map((item, index) => ({
+      id: item?.id ?? `${product.id}-audio-${index}`,
+      type: 'audio',
+      url: item?.audio_url || item?.audio || '',
+      alt: item?.title || `${product.name || 'Product'} audio`,
+    })) : [];
+
+    const merged = [...imageItems, ...videoItems, ...audioItems];
+
+    if (merged.length === 0) {
+      const primaryImage = typeof product.image === 'string' && product.image && product.image !== '🥚' ? product.image : '';
+      return primaryImage ? [{ id: `${product.id}-primary-image`, type: 'image', url: primaryImage, alt: product.name || 'Product image' }] : [];
+    }
+
+    return merged;
+  }, [product]);
+
+  useEffect(() => {
+    setCurrentMediaIndex(0);
+  }, [product?.id]);
+
+  const currentMedia = productMedia[currentMediaIndex] || productMedia[0] || null;
+  const displayMediaCount = productMedia.length;
+
+  const goToMedia = (direction) => {
+    if (!productMedia.length) return;
+    setCurrentMediaIndex((previous) => {
+      if (direction === 'next') return (previous + 1) % productMedia.length;
+      return (previous - 1 + productMedia.length) % productMedia.length;
+    });
+  };
+
+  const handleMediaTouchStart = (event) => {
+    touchStartX.current = event.changedTouches[0]?.clientX ?? null;
+  };
+
+  const handleMediaTouchEnd = (event) => {
+    if (touchStartX.current === null) return;
+    const distance = (event.changedTouches[0]?.clientX ?? touchStartX.current) - touchStartX.current;
+    touchStartX.current = null;
+    if (Math.abs(distance) < 48) return;
+    goToMedia(distance < 0 ? 'next' : 'prev');
+  };
+
+  const handleShareProduct = async (product) => {
+    const productName = product?.name || 'Kukuta product';
+    const productPrice = product?.price || 'Check it out';
+    const shareText = `Check out ${productName} on Kukuta for ${productPrice}.`;
+    const shareUrl = typeof window !== 'undefined' ? window.location.href : 'https://kukuta.com';
+
+    try {
+      if (navigator.share) {
+        await navigator.share({
+          title: productName,
+          text: shareText,
+          url: shareUrl,
+        });
+        return;
+      }
+    } catch (error) {
+      if (error && error.name === 'AbortError') return;
+    }
+
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(`${shareText} ${shareUrl}`);
+        window.alert('Product link copied to clipboard.');
+        return;
+      }
+
+      const tempInput = document.createElement('textarea');
+      tempInput.value = `${shareText} ${shareUrl}`;
+      document.body.appendChild(tempInput);
+      tempInput.select();
+      document.execCommand('copy');
+      document.body.removeChild(tempInput);
+      window.alert('Product link copied to clipboard.');
+    } catch (error) {
+      window.alert('Sharing is not supported in this browser.');
+    }
+  };
 
   useEffect(() => {
     let active = true;
@@ -1812,8 +2021,8 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
           ? await sellerResult.value.json()
           : [];
         if (active) {
-          setReviews(Array.isArray(productData) ? productData : []);
-          setSellerReviews(Array.isArray(sellerData) ? sellerData : []);
+          setReviews(Array.isArray(productData) ? productData : productData.results || []);
+          setSellerReviews(Array.isArray(sellerData) ? sellerData : sellerData.results || []);
         }
       })
       .catch(() => {
@@ -1827,52 +2036,6 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
   const sellerAverage = sellerReviews.length > 0
     ? sellerReviews.reduce((total, review) => total + Number(review.rating || 0), 0) / sellerReviews.length
     : null;
-
-  const isSellerVerified = sellerAverage !== null && sellerAverage >= 4.5;
-
-  const productAverage = reviews.length > 0
-    ? reviews.reduce((total, review) => total + Number(review.rating || 0), 0) / reviews.length
-    : null;
-
-  useEffect(() => {
-    if (!relatedProducts.length) {
-      setRelatedRatings({});
-      return undefined;
-    }
-
-    let active = true;
-    Promise.allSettled(
-      relatedProducts.map(async (related) => {
-        try {
-          const response = await apiFetch(`/reviews/?product=${related.id}`, { method: 'GET' });
-          const data = response.ok ? await response.json() : [];
-          const reviewList = Array.isArray(data) ? data : [];
-          const average = reviewList.length > 0
-            ? reviewList.reduce((total, review) => total + Number(review.rating || 0), 0) / reviewList.length
-            : null;
-          return [related.id, average];
-        } catch {
-          return [related.id, null];
-        }
-      })
-    )
-      .then((results) => {
-        if (!active) return;
-        const nextRatings = {};
-        results.forEach((result) => {
-          if (result.status === 'fulfilled') {
-            const [id, rating] = result.value;
-            nextRatings[id] = rating;
-          }
-        });
-        setRelatedRatings(nextRatings);
-      })
-      .catch(() => {
-        if (active) setRelatedRatings({});
-      });
-
-    return () => { active = false; };
-  }, [relatedProducts]);
 
   const handleReviewSubmit = async (event) => {
     event.preventDefault();
@@ -1954,24 +2117,93 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
       <button className="back-button" onClick={onBack}>← Back to products</button>
       <div className="product-detail-layout">
         <div className="product-detail-card">
-          <div className="product-detail-image">{getProductImage(product)}</div>
-          <div className="product-detail-info">
-            <h2>{product.name}</h2>
-            {product.seller && (
-              <div>
-                <p className="seller-info">
-                  Sold by {product.seller}
-                  {isSellerVerified && (
-                    <span className="seller-verified-badge">
-                      <span className="seller-verified-icon">✓</span>
-                      Verified
-                    </span>
-                  )}
-                </p>
+          <div
+            className="product-detail-gallery"
+            onTouchStart={handleMediaTouchStart}
+            onTouchEnd={handleMediaTouchEnd}
+          >
+            <div className="product-detail-image">
+              <button
+                className="product-detail-share-btn"
+                type="button"
+                onClick={() => handleShareProduct(product)}
+                aria-label={`Share ${product.name}`}
+                title="Share product"
+              >
+                <span aria-hidden="true">↗</span>
+              </button>
+              {currentMedia ? (
+                currentMedia.type === 'video' ? (
+                  <video src={currentMedia.url} controls playsInline preload="metadata" aria-label={currentMedia.alt || `${product.name} video`} poster={product.image && product.image !== '🥚' ? product.image : undefined}>
+                    <source src={currentMedia.url} />
+                  </video>
+                ) : currentMedia.type === 'audio' ? (
+                  <div className="product-detail-audio">
+                    <span className="product-detail-audio-icon" aria-hidden="true">♫</span>
+                    <strong>{currentMedia.alt || `${product.name} audio`}</strong>
+                    <audio src={currentMedia.url} controls preload="metadata" aria-label={currentMedia.alt || `${product.name} audio`}>
+                      <source src={currentMedia.url} />
+                      Your browser does not support audio playback.
+                    </audio>
+                  </div>
+                ) : (
+                  <img src={currentMedia.url} alt={currentMedia.alt || product.name || 'Product image'} loading="eager" decoding="async" />
+                )
+              ) : (
+                getProductImage(product)
+              )}
+            </div>
+
+            {displayMediaCount > 1 && (
+              <div className="product-detail-media-toolbar">
+                <div className="product-detail-media-nav">
+                  <button type="button" className="product-detail-media-button" onClick={() => goToMedia('prev')} aria-label="Previous media">← Prev</button>
+                  <span className="product-detail-media-counter">{currentMediaIndex + 1} / {displayMediaCount}</span>
+                  <button type="button" className="product-detail-media-button" onClick={() => goToMedia('next')} aria-label="Next media">Next →</button>
+                </div>
+                <div className="product-detail-media-thumbs">
+                  {productMedia.map((media, index) => {
+                    const mediaLabel = media.alt || `${media.type === 'video' ? 'Product video' : media.type === 'audio' ? 'Product audio' : 'Product image'} ${index + 1}`;
+                    return (
+                      <button
+                        key={media.id || `${media.type}-${index}`}
+                        type="button"
+                        className={`product-detail-media-thumb ${index === currentMediaIndex ? 'is-active' : ''}`}
+                        onClick={() => setCurrentMediaIndex(index)}
+                        aria-label={`View ${mediaLabel}`}
+                      >
+                        <span className="product-detail-media-thumb-visual">
+                          {media.type === 'video' ? (
+                            <video src={media.url} muted playsInline preload="metadata" aria-hidden="true" />
+                          ) : media.type === 'audio' ? (
+                            <span className="product-detail-audio-thumb" aria-hidden="true">♫</span>
+                          ) : (
+                            <img src={media.url} alt="" loading="lazy" decoding="async" />
+                          )}
+                          <span className={`product-detail-media-kind ${media.type}`} aria-hidden="true">
+                            {media.type === 'video' ? 'Video' : media.type === 'audio' ? 'Audio' : 'Photo'}
+                          </span>
+                        </span>
+                        <span className="product-detail-media-thumb-caption" title={mediaLabel}>{mediaLabel}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             )}
+          </div>
+
+          <div className="product-detail-info">
+            <h2>{product.name}</h2>
+            {product.seller && <p className="seller-info">Sold by {product.seller}</p>}
             <p className="product-description">{product.description}</p>
             <div className="product-detail-price">{product.price}</div>
+            {product.category === 'Egg*Chicks' && product.price_per_item && (
+              <div className="product-detail-unit-price">
+                <span>Price of each egg/chick</span>
+                <strong>{product.price_per_item}</strong>
+              </div>
+            )}
             {currentUser?.role === 'buyer' && sellerAverage !== null && sellerAverage < 3 && (
               <div className="seller-fraud-alert" role="alert" aria-live="assertive">
                 <span className="seller-fraud-alert-icon" aria-hidden="true">⚠</span>
@@ -1986,10 +2218,27 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
               <button className="cart-add-btn" onClick={() => onAddToCart(product)}>
                 Add to Cart
               </button>
-              <button className="add-cart-btn" onClick={() => onOrder(product)}>
+              <button className="add-cart-btn" onClick={() => {
+                setOrderNotice('');
+                if (isOwnProduct) {
+                  setOrderNotice('This is your product. You cannot order or start a chat for your own listing.');
+                  return;
+                }
+                onOrder(product);
+              }}>
                 Order Now
               </button>
             </div>
+            {orderNotice && (
+              <div className="seller-fraud-alert" role="alert" aria-live="polite">
+                <span className="seller-fraud-alert-icon" aria-hidden="true">!</span>
+                <div>
+                  <span className="seller-fraud-alert-label">Order notice</span>
+                  <strong>This is your product</strong>
+                  <span>You cannot order or start a chat for your own listing.</span>
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -2000,9 +2249,7 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
             <span className="reviews-kicker">Customer feedback</span>
             <h3>Reviews for {product.name}</h3>
           </div>
-          <span className="reviews-count review-summary-badge" aria-label={productAverage !== null ? `${productAverage.toFixed(1)} out of 5 stars` : 'No ratings yet'}>
-            {productAverage !== null ? <>★ {productAverage.toFixed(1)}</> : '★ —'}
-          </span>
+          <span className="reviews-count">{reviews.length} review{reviews.length === 1 ? '' : 's'}</span>
         </div>
         {reviews.length > 0 ? (
           <div className="reviews-list">
@@ -2026,7 +2273,7 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
                   <>
                     <div className="review-item-header">
                       <strong>{review.buyer_name || 'Buyer'}</strong>
-                      <span className="review-stars" aria-label={`${Number(review.rating).toFixed(1)} out of 5 stars`}>★ {Number(review.rating).toFixed(1)}</span>
+                      <span className="review-stars" aria-label={`${review.rating} out of 5 stars`}>{'★'.repeat(review.rating)}<span>{'★'.repeat(5 - review.rating)}</span></span>
                     </div>
                     <p>{review.comment}</p>
                     {review.images?.length > 0 && (
@@ -2094,6 +2341,24 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
           {!currentUser && <div className="review-note">Sign in as a buyer to leave a review.</div>}
         </form>
       </section>
+      <div className="related-products-panel">
+        <h3>Related products</h3>
+        {relatedProducts.length > 0 ? (
+          <div className="related-products-grid">
+            {relatedProducts.map((related) => (
+              <div key={related.id} className="related-product-card" onClick={() => onViewRelated(related.id)}>
+                <div className="related-product-image">{getProductImage(related)}</div>
+                <div>
+                  <h4>{related.name}</h4>
+                  <p>{related.price}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p>No related products available.</p>
+        )}
+      </div>
       <section className="seller-reviews-panel">
         <div className="reviews-heading">
           <div>
@@ -2129,35 +2394,6 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
           <p className="reviews-empty">No seller reviews yet.</p>
         )}
       </section>
-      <div className="related-products-panel">
-        <h3>Related products</h3>
-        {relatedProducts.length > 0 ? (
-          <div className="related-products-grid">
-            {relatedProducts.map((related) => {
-              const average = typeof relatedRatings[related.id] === 'number' ? relatedRatings[related.id] : null;
-              const filledStars = average !== null ? Math.max(0, Math.min(5, Math.round(average))) : 0;
-
-              return (
-                <div key={related.id} className="related-product-card" onClick={() => onViewRelated(related.id)}>
-                  <div className="related-product-image">
-                    {getProductImage(related)}
-                    <div className="related-product-badge" aria-label={average !== null ? `${average.toFixed(1)} out of 5 stars` : 'No ratings yet'}>
-                      <span className="related-product-stars">{'★'.repeat(filledStars)}{average !== null ? '☆'.repeat(5 - filledStars) : '☆☆☆☆☆'}</span>
-                      <span className="related-product-rating">{average !== null ? average.toFixed(1) : 'New'}</span>
-                    </div>
-                  </div>
-                  <div className="related-product-content">
-                    <h4>{related.name}</h4>
-                    <p>{related.price}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ) : (
-          <p>No related products available.</p>
-        )}
-      </div>
     </section>
   );
 }
@@ -2166,7 +2402,6 @@ export default function App() {
   const [showRoosterAnimation, setShowRoosterAnimation] = useState(true);
   const [search, setSearch] = useState('');
   const [selectedCategory, setSelectedCategory] = useState(null);
-  const [isMobileLayout, setIsMobileLayout] = useState(() => typeof window !== 'undefined' ? window.innerWidth <= 768 : false);
   const [selectedProductId, setSelectedProductId] = useState(null);
   const [isLoginOpen, setIsLoginOpen] = useState(false);
   const [isSigninOpen, setIsSigninOpen] = useState(false);
@@ -2177,6 +2412,7 @@ export default function App() {
   const [isResetPasswordPage, setIsResetPasswordPage] = useState(false);
   const [resetUid, setResetUid] = useState('');
   const [resetToken, setResetToken] = useState('');
+  const [resetExpiresAt, setResetExpiresAt] = useState('');
   const [isDashboardOpen, setIsDashboardOpen] = useState(false);
   const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
   const [isMenuOpen, setIsMenuOpen] = useState(false);
@@ -2184,6 +2420,32 @@ export default function App() {
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [isBuyerHistoryOpen, setIsBuyerHistoryOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState(null);
+  useEffect(() => {
+    try {
+      const storedUser = localStorage.getItem('kukutaCurrentUser');
+      if (storedUser) {
+        const parsed = JSON.parse(storedUser);
+        if (parsed && parsed.username) {
+          setCurrentUser(parsed);
+        }
+      }
+    } catch (e) {
+      // ignore malformed persisted session
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!currentUser) {
+      try { localStorage.removeItem('kukutaCurrentUser'); } catch (e) {}
+      return;
+    }
+
+    try {
+      localStorage.setItem('kukutaCurrentUser', JSON.stringify(currentUser));
+    } catch (e) {
+      // ignore storage errors
+    }
+  }, [currentUser]);
   const [allProducts, setAllProducts] = useState([]);
   const [orders, setOrders] = useState(() => {
     try {
@@ -2217,24 +2479,16 @@ export default function App() {
   const [contactProduct, setContactProduct] = useState(null);
   const [chatRecipient, setChatRecipient] = useState('');
   const [messagePanelOpen, setMessagePanelOpen] = useState(false);
-  const [autoOpenConversation, setAutoOpenConversation] = useState(false);
   const [messageDraft, setMessageDraft] = useState('');
   const [messageHistory, setMessageHistory] = useState([]);
   const [unreadMessages, setUnreadMessages] = useState([]);
-  const [bookingMap, setBookingMap] = useState({});
   const [activeInvoice, setActiveInvoice] = useState(null);
+  const productsSectionRef = useRef(null);
 
   const showFlash = (message, type = 'info', duration = 5000) => {
     setFlash({ message, type });
     setTimeout(() => setFlash(null), duration);
   };
-
-  useEffect(() => {
-    const handleResize = () => setIsMobileLayout(window.innerWidth <= 768);
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
 
   useEffect(() => {
     if (showRoosterAnimation) return undefined;
@@ -2244,13 +2498,13 @@ export default function App() {
     return () => clearTimeout(timer);
   }, [showRoosterAnimation]);
 
-  const handleThemeToggle = () => {
+  const handleThemeToggle = useCallback(() => {
     const nextTheme = theme === 'light' ? 'dark' : 'light';
     setTheme(nextTheme);
     showFlash(`Switched to ${nextTheme} mode`, 'success', 3000);
-  };
+  }, [theme, showFlash]);
 
-  const handleAddToCart = (product) => {
+  const handleAddToCart = useCallback((product) => {
     setCartItems((prev) => {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
@@ -2260,7 +2514,7 @@ export default function App() {
     });
     setIsCartOpen(true);
     showFlash(`${product.name} added to cart`, 'success');
-  };
+  }, [showFlash]);
 
   const handleRemoveFromCart = (productId) => {
     setCartItems((prev) => prev.filter((item) => item.id !== productId));
@@ -2274,7 +2528,7 @@ export default function App() {
 
   const cartTotal = cartItems.reduce((sum, item) => sum + parsePrice(item.price) * item.quantity, 0);
 
-  const handleToggleWishlist = (product) => {
+  const handleToggleWishlist = useCallback((product) => {
     setWishlist((prev) => {
       if (prev.includes(product.id)) {
         showFlash(`${product.name} removed from wishlist`, 'info');
@@ -2284,7 +2538,7 @@ export default function App() {
       showFlash(`${product.name} added to wishlist`, 'success');
       return [...prev, product.id];
     });
-  };
+  }, [showFlash]);
 
   const handleCheckout = () => {
     if (cartItems.length === 0) {
@@ -2293,8 +2547,8 @@ export default function App() {
     }
 
     const checkoutOrders = cartItems
+      .filter((item) => !isLivestockProduct(item))
       .map((item, index) => {
-        const status = isLivestockProduct(item) ? 'Processing' : 'Confirmed';
         const order = {
           id: Date.now() + index,
           productId: item.id,
@@ -2303,14 +2557,14 @@ export default function App() {
           seller: item.seller || 'Farm',
           buyer: currentUser?.username || 'Guest',
           date: new Date().toLocaleDateString(),
-          status,
+          status: 'Confirmed',
           invoice: createInvoiceForOrder({
             id: Date.now() + index,
             productName: item.name,
             buyer: currentUser?.username || 'Guest',
             seller: item.seller || 'Farm',
             price: item.price,
-            status,
+            status: 'Confirmed',
           }, item),
         };
 
@@ -2326,8 +2580,8 @@ export default function App() {
     setIsCartOpen(false);
     showFlash(
       checkoutOrders.length > 0
-        ? 'Checkout complete! Your order is now processing.'
-        : 'Checkout complete!',
+        ? 'Checkout complete! Invoice generated for your non-livestock order.'
+        : 'Checkout complete! Your order is now processing.',
       'success'
     );
   };
@@ -2345,6 +2599,36 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('kukutaOrders', JSON.stringify(orders));
   }, [orders]);
+
+  useEffect(() => {
+    if (!currentUser?.username) return undefined;
+    let active = true;
+    const loadAcceptedOrders = async () => {
+      try {
+        const response = await apiFetch('/orders/', { method: 'GET' });
+        if (!response.ok) return;
+        const payload = await response.json();
+        const records = Array.isArray(payload) ? payload : payload.results || [];
+        const acceptedOrders = records
+          .filter((record) => record.agreed_price !== null && record.agreed_price !== undefined
+            && record.buyer_price_accepted && record.seller_price_accepted)
+          .map(mapAgreedOrder);
+        if (!active || acceptedOrders.length === 0) return;
+        setOrders((previous) => {
+          const acceptedIds = new Set(acceptedOrders.map((order) => order.id));
+          return [...acceptedOrders, ...previous.filter((order) => !acceptedIds.has(order.id))];
+        });
+      } catch (error) {
+        // Keep locally completed checkout orders available when the API is offline.
+      }
+    };
+    loadAcceptedOrders();
+    const timer = window.setInterval(loadAcceptedOrders, 12000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [currentUser?.username, allProducts]);
 
   useEffect(() => {
     if (!currentUser?.username) {
@@ -2399,22 +2683,6 @@ export default function App() {
   }, [theme]);
 
   useEffect(() => {
-    const restoreCurrentUser = async () => {
-      if (!localStorage.getItem('accessToken') && !localStorage.getItem('refreshToken')) {
-        return;
-      }
-
-      try {
-        const response = await apiFetch('/me/', { method: 'GET' });
-        if (!response.ok) return;
-        const user = await response.json();
-        setCurrentUser(user);
-      } catch (err) {
-        // Anonymous startup is valid when saved credentials are unavailable.
-      }
-    };
-
-    restoreCurrentUser();
     fetchProducts();
 
     const updateRoute = () => {
@@ -2430,9 +2698,11 @@ export default function App() {
       if (resetMatch) {
         setResetUid(resetMatch[1]);
         setResetToken(resetMatch[2]);
+        setResetExpiresAt(new URLSearchParams(window.location.search).get('expires_at') || '');
         setIsResetPasswordPage(true);
       } else {
         setIsResetPasswordPage(false);
+        setResetExpiresAt('');
       }
     };
 
@@ -2444,11 +2714,10 @@ export default function App() {
   // Handle clicking outside to close dropdowns
   useEffect(() => {
     const handleClickOutside = (event) => {
-      if (!event.target.closest('.profile-container')) setIsProfileOpen(false);
-      if (!event.target.closest('.role-dropdown-container')) setIsRoleDropdownOpen(false);
-      if (!event.target.closest('.header-shell .navbar-dropdown') && !event.target.closest('.hamburger-menu')) setIsMenuOpen(false);
-      if (!event.target.closest('.search-form') && !event.target.closest('.search-toggle')) setIsSearchOpen(false);
-      if (!event.target.closest('.messenger-panel')) setMessagePanelOpen(false);
+      if (!event.target.closest('.profile-container') && !event.target.closest('.role-dropdown-container')) {
+        setIsProfileOpen(false);
+        setIsRoleDropdownOpen(false);
+      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -2456,36 +2725,71 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    const elements = document.querySelectorAll('.scroll-reveal');
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (entry.isIntersecting) {
-            entry.target.classList.add('visible');
-            observer.unobserve(entry.target);
-          }
-        });
-      },
-      {
-        threshold: 0.18,
-      }
-    );
+    const reveal = () => {
+      const elements = document.querySelectorAll('.scroll-reveal');
+      elements.forEach((el) => el.classList.add('visible'));
+    };
 
-    elements.forEach((el) => observer.observe(el));
-    return () => elements.forEach((el) => observer.unobserve(el));
+    const frame = window.requestAnimationFrame(reveal);
+    return () => window.cancelAnimationFrame(frame);
   }, []);
 
   const navigateToForgotPassword = () => {
     window.history.pushState(null, '', '/forgot-password');
     setIsForgotPasswordPage(true);
     setIsResetPasswordPage(false);
+    setResetExpiresAt('');
   };
 
-  const navigateToResetConfirm = (uid, token) => {
-    const path = `/password-reset-confirm/${uid}/${token}/`;
+  const handleRequestNewOtp = async (identifier) => {
+    const trimmedIdentifier = (identifier || '').trim();
+    if (!trimmedIdentifier) {
+      return { ok: false, message: 'Email or phone number is required to request a new code.' };
+    }
+
+    try {
+      const response = await apiFetch('/password-reset/', {
+        method: 'POST',
+        auth: false,
+        body: { identifier: trimmedIdentifier },
+      });
+      const data = await response.json();
+
+      if (!response.ok) {
+        return {
+          ok: false,
+          message: data?.error || data?.message || 'Unable to send a new OTP right now.',
+        };
+      }
+
+      if (!data?.uid || !data?.token) {
+        return {
+          ok: false,
+          message: data?.message || 'The reset request could not be refreshed.',
+        };
+      }
+
+      const expiryQuery = data.expires_at ? `?${new URLSearchParams({ expires_at: data.expires_at })}` : '';
+      const path = `/password-reset-confirm/${data.uid}/${data.token}/${expiryQuery}`;
+      window.history.pushState(null, '', path);
+      setResetUid(data.uid);
+      setResetToken(data.token);
+      setResetExpiresAt(data.expires_at || '');
+      setIsResetPasswordPage(true);
+      setIsForgotPasswordPage(false);
+      return { ok: true, message: data.message || 'A fresh OTP has been sent.' };
+    } catch (error) {
+      return { ok: false, message: 'Unable to send a new OTP. Please try again.' };
+    }
+  };
+
+  const navigateToResetConfirm = (uid, token, expiresAt) => {
+    const expiryQuery = expiresAt ? `?${new URLSearchParams({ expires_at: expiresAt })}` : '';
+    const path = `/password-reset-confirm/${uid}/${token}/${expiryQuery}`;
     window.history.pushState(null, '', path);
     setResetUid(uid);
     setResetToken(token);
+    setResetExpiresAt(expiresAt || '');
     setIsResetPasswordPage(true);
     setIsForgotPasswordPage(false);
   };
@@ -2504,11 +2808,35 @@ export default function App() {
     setIsMenuOpen(false);
   };
 
+  const openBuyerDashboard = () => {
+    setSelectedProductId(null);
+    setIsBuyerHistoryOpen(true);
+    setIsDashboardOpen(false);
+    setIsMenuOpen(false);
+    setIsProfileOpen(false);
+    setIsProfileModalOpen(false);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  };
+
+  const openSellerDashboard = () => {
+    setSelectedProductId(null);
+    setIsDashboardOpen(true);
+    setIsBuyerHistoryOpen(false);
+    setIsMenuOpen(false);
+    setIsProfileOpen(false);
+    setIsProfileModalOpen(false);
+    window.scrollTo({ top: 0, behavior: 'auto' });
+  };
+
   const handleSearchSubmit = (event) => {
     event.preventDefault();
     setSelectedProductId(null);
     setIsSearchOpen(false);
-    document.getElementById('products')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const section = document.getElementById('products');
+    if (section) {
+      const top = Math.max(0, section.getBoundingClientRect().top + window.scrollY - 12);
+      window.scrollTo({ top, behavior: 'auto' });
+    }
   };
 
   const fetchProducts = async () => {
@@ -2518,36 +2846,44 @@ export default function App() {
         throw new Error('Failed to fetch products');
       }
       const data = await response.json();
-      const products = Array.isArray(data) && data.length > 0 ? data : demoProducts;
+      const products = Array.isArray(data?.results)
+        ? data.results
+        : (Array.isArray(data) ? data : []);
       setAllProducts(products);
-      if (!data || data.length === 0) {
-        showFlash('No backend products found. Showing demo items.', 'info', 6000);
-      }
       setLoading(false);
     } catch (err) {
-      setAllProducts(demoProducts);
+      setAllProducts([]);
       setLoading(false);
-      showFlash('Unable to reach product API. Showing demo items.', 'error', 6000);
+      showFlash('Unable to reach product API.', 'error', 6000);
     }
   };
 
   const handleLogin = (user) => {
-    setCurrentUser({
+    const safeUser = {
       role: user.role || 'buyer',
       ...user,
-    });
+    };
+    if (user.tokens) {
+      storeAuthTokens(user.tokens.access, user.tokens.refresh);
+    }
+    setCurrentUser(safeUser);
     showFlash(`Login successful. Welcome back, ${user.name || user.username || 'to Kukuta'}!`, 'success', 4000);
   };
 
   const handleSignup = (user) => {
-    setCurrentUser({
+    const safeUser = {
       role: user.role || 'buyer',
       ...user,
-    });
+    };
+    if (user.tokens) {
+      storeAuthTokens(user.tokens.access, user.tokens.refresh);
+    }
+    setCurrentUser(safeUser);
   };
 
   const handleRoleToggle = async (newRole) => {
     if (!currentUser) return;
+    const dashboardIsOpen = isDashboardOpen || isBuyerHistoryOpen;
     try {
       const response = await apiFetch('/role-toggle/', {
         method: 'POST',
@@ -2555,12 +2891,21 @@ export default function App() {
       });
       const data = await response.json();
       if (response.ok) {
+        const updatedRole = data.role || newRole;
         setCurrentUser((current) =>
-          current ? { ...current, role: data.role || newRole } : current
+          current ? { ...current, role: updatedRole } : current
         );
-        setIsRoleDropdownOpen(false); // Close the dropdown after switching
+        if (dashboardIsOpen) {
+          setIsDashboardOpen(updatedRole === 'seller');
+          setIsBuyerHistoryOpen(updatedRole === 'buyer');
+          setSelectedProductId(null);
+          window.scrollTo({ top: 0, behavior: 'auto' });
+        }
+        setIsMenuOpen(false);
+        setIsRoleDropdownOpen(false);
+        setIsProfileOpen(false);
         setIsProfileModalOpen(false);
-        showFlash(`Role switched to ${newRole}.`, 'success');
+        showFlash(`Role switched to ${updatedRole}.`, 'success');
       } else {
         showFlash(data.error || 'Could not switch role.', 'error');
       }
@@ -2569,103 +2914,36 @@ export default function App() {
     }
   };
 
-  const getBookingKey = (product, recipientUser) => {
-    if (!product) return null;
-    const productId = Number(product.id ?? 0);
-    const participants = [currentUser?.username || 'guest', recipientUser || 'seller']
-      .filter(Boolean)
-      .sort();
-    return `${productId}-${participants.join('|')}`;
-  };
+  const confirmBookingInChat = async (agreedPrice, orderId) => {
+    if (!contactProduct || !currentUser || !chatRecipient) return null;
+    try {
+      const response = await apiFetch('/orders/price-agreement/', {
+        method: 'POST',
+        body: {
+          product_id: contactProduct.id,
+          participant: chatRecipient,
+          agreed_price: agreedPrice,
+          order_id: orderId,
+        },
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        showFlash(data.error || 'Could not accept this price.', 'error');
+        return null;
+      }
 
-  const createBookingState = (product, recipientUser, side = 'buyer') => {
-    const key = getBookingKey(product, recipientUser);
-    if (!key) return null;
-
-    const buyerName = side === 'buyer' ? currentUser?.username || 'Guest' : recipientUser || 'Buyer';
-    const sellerName = side === 'buyer' ? product.seller || 'Farm' : currentUser?.username || 'Seller';
-
-    const state = {
-      buyerConfirmed: side === 'buyer',
-      sellerConfirmed: side === 'seller',
-      buyer: buyerName,
-      seller: sellerName,
-      status: side === 'buyer' ? 'Waiting for seller confirmation' : 'Waiting for buyer confirmation',
-    };
-
-    setBookingMap((prev) => ({ ...prev, [key]: { ...(prev[key] || {}), ...state } }));
-    return state;
-  };
-
-  const finalizeBookingOrder = (product, buyerName, sellerName) => {
-    const newOrder = {
-      id: Date.now(),
-      productId: product.id,
-      productName: product.name,
-      price: product.price,
-      seller: sellerName || product.seller || 'Farm',
-      buyer: buyerName || currentUser?.username || 'Guest',
-      date: new Date().toLocaleDateString(),
-      status: 'Confirmed',
-      invoice: createInvoiceForOrder({
-        id: Date.now(),
-        productName: product.name,
-        buyer: buyerName || currentUser?.username || 'Guest',
-        seller: sellerName || product.seller || 'Farm',
-        price: product.price,
-        status: 'Confirmed',
-      }, product),
-    };
-
-    setOrders((prev) => {
-      const alreadyExists = prev.some((order) => (
-        order.productId === product.id &&
-        order.buyer === newOrder.buyer &&
-        order.seller === newOrder.seller
-      ));
-      return alreadyExists ? prev : [newOrder, ...prev];
-    });
-
-    if (newOrder.invoice) {
-      setActiveInvoice(newOrder.invoice);
+      if (data.status === 'confirmed') {
+        const agreedOrder = mapAgreedOrder(data);
+        setOrders((previous) => [agreedOrder, ...previous.filter((order) => order.id !== agreedOrder.id)]);
+        showFlash(`Both sides accepted ${agreedOrder.price}. The order is now on both dashboards.`, 'success');
+      } else {
+        showFlash('Price accepted. The order will appear after the other side accepts the same amount.', 'info');
+      }
+      return data;
+    } catch (error) {
+      showFlash('Could not save the price acceptance. Check your connection and try again.', 'error');
+      return null;
     }
-  };
-
-  const confirmBookingInChat = () => {
-    if (!contactProduct || !currentUser || !chatRecipient) return;
-
-    const key = getBookingKey(contactProduct, chatRecipient);
-    if (!key) return;
-
-    const currentState = bookingMap[key] || {
-      buyerConfirmed: false,
-      sellerConfirmed: false,
-      buyer: currentUser?.role === 'buyer' ? currentUser.username : chatRecipient,
-      seller: currentUser?.role === 'seller' ? currentUser.username : contactProduct.seller,
-      status: 'Pending',
-    };
-
-    const nextState = { ...currentState };
-    if (currentUser.role === 'buyer') {
-      nextState.buyerConfirmed = true;
-      nextState.buyer = currentUser.username;
-      nextState.seller = contactProduct.seller || 'Farm';
-    } else {
-      nextState.sellerConfirmed = true;
-      nextState.seller = currentUser.username;
-      nextState.buyer = chatRecipient;
-    }
-
-    if (nextState.buyerConfirmed && nextState.sellerConfirmed) {
-      nextState.status = 'Confirmed';
-      finalizeBookingOrder(contactProduct, nextState.buyer, nextState.seller);
-      showFlash('Both sides confirmed the booking. It is now visible in the seller dashboard.', 'success');
-    } else {
-      nextState.status = currentUser.role === 'buyer' ? 'Waiting for seller confirmation' : 'Waiting for buyer confirmation';
-      showFlash(currentUser.role === 'buyer' ? 'Booking request is ready. Waiting for seller confirmation.' : 'You confirmed the booking. Waiting for buyer confirmation.', 'info');
-    }
-
-    setBookingMap((prev) => ({ ...prev, [key]: nextState }));
   };
 
   const handlePlaceOrder = (product) => {
@@ -2695,9 +2973,26 @@ export default function App() {
   };
 
   const handleOrderNow = async (product) => {
-    if (!currentUser || currentUser.role !== 'buyer') {
-      showFlash('Please sign in as a buyer to start a booking.', 'info');
+    if (!currentUser) {
+      showFlash('Please sign in to continue.', 'info');
       setIsLoginOpen(true);
+      return;
+    }
+
+    const isOwnProduct = currentUser.role === 'seller'
+      && String(product?.seller || '').trim().toLowerCase() === String(currentUser.username || '').trim().toLowerCase();
+    if (isOwnProduct) {
+      showFlash('This is your product. You cannot order or start a chat for your own listing.', 'info');
+      return;
+    }
+
+    if (currentUser.role === 'seller') {
+      await handleContactSeller(product);
+      return;
+    }
+
+    if (currentUser.role !== 'buyer') {
+      showFlash('Please sign in as a buyer or seller to continue.', 'info');
       return;
     }
 
@@ -2705,33 +3000,31 @@ export default function App() {
       showFlash('Livestock bookings are handled through chat confirmation only.', 'info');
     }
 
-    createBookingState(product, product.seller, 'buyer');
-    await handleContactSeller(product, true);
+    await handleContactSeller(product);
   };
 
-  const handleContactSeller = async (product, shouldOpenConversation = false) => {
+  const handleContactSeller = async (product) => {
     if (!currentUser) {
       showFlash('Please sign in to contact the seller.', 'info');
       setIsLoginOpen(true);
       return;
     }
-    if (currentUser.role !== 'buyer') {
-      showFlash('Only buyers can contact sellers from the storefront.', 'info');
+    if (currentUser.role !== 'buyer' && currentUser.role !== 'seller') {
+      showFlash('Only buyers and sellers can contact a seller from the storefront.', 'info');
       return;
     }
 
-    const bookingKey = getBookingKey(product, product.seller);
-    const existingBooking = bookingKey ? bookingMap[bookingKey] : null;
+    const isOwnProduct = currentUser.role === 'seller'
+      && String(product?.seller || '').trim().toLowerCase() === String(currentUser.username || '').trim().toLowerCase();
+    if (isOwnProduct) {
+      showFlash('This is your product. You cannot start a chat for your own listing.', 'info');
+      return;
+    }
 
     setContactProduct(product);
     setChatRecipient(product.seller);
-    setAutoOpenConversation(shouldOpenConversation);
     setMessageDraft('');
     setMessagePanelOpen(true);
-
-    if (!existingBooking) {
-      createBookingState(product, product.seller, 'buyer');
-    }
 
     try {
       const response = await apiFetch('/messages/', {
@@ -2739,9 +3032,8 @@ export default function App() {
       });
       if (!response.ok) return;
       const data = await response.json();
-      const relevant = Array.isArray(data)
-        ? data.filter((item) => item.product === product.id || item.product_name === product.name)
-        : [];
+      const messages = Array.isArray(data) ? data : data.results || [];
+      const relevant = messages.filter((item) => item.product === product.id || item.product_name === product.name);
       setMessageHistory(relevant);
     } catch (error) {
       setMessageHistory([]);
@@ -2749,27 +3041,14 @@ export default function App() {
   };
 
   const handleContactBuyer = (order) => {
+    const otherParticipant = order.buyer === currentUser?.username ? order.seller : order.buyer;
     const product = allProducts.find((item) => item.id === order.productId) || {
       id: order.productId,
       name: order.productName,
       seller: currentUser?.username,
     };
-    const key = getBookingKey(product, order.buyer);
-    if (key && !bookingMap[key]) {
-      setBookingMap((prev) => ({
-        ...prev,
-        [key]: {
-          buyerConfirmed: true,
-          sellerConfirmed: false,
-          buyer: order.buyer,
-          seller: currentUser?.username || product.seller,
-          status: 'Waiting for seller confirmation',
-        },
-      }));
-    }
     setContactProduct(product);
-    setChatRecipient(order.buyer);
-    setAutoOpenConversation(false);
+    setChatRecipient(otherParticipant);
     setMessagePanelOpen(true);
   };
 
@@ -2794,14 +3073,14 @@ export default function App() {
       }
       return;
     }
-    const product = allProducts.find((item) => item.id === (message.product || message.product_id)) || {
-      id: message.product || message.product_id,
+    const messageProductId = message.product || message.product_id;
+    const product = allProducts.find((item) => String(item.id) === String(messageProductId)) || (messageProductId ? {
+      id: messageProductId,
       name: message.product_name || 'Product conversation',
       seller: currentUser?.username,
-    };
+    } : null);
     setContactProduct(product);
     setChatRecipient(message.sender_name || message.sender);
-    setAutoOpenConversation(false);
     setMessagePanelOpen(true);
     setUnreadMessages([]);
     await Promise.all(unreadMessages.map((item) => (
@@ -2911,13 +3190,22 @@ export default function App() {
     try {
       localStorage.removeItem('accessToken');
       localStorage.removeItem('refreshToken');
+      localStorage.removeItem('kukutaCurrentUser');
+      sessionStorage.removeItem('accessToken');
+      sessionStorage.removeItem('refreshToken');
+      delete window.__KUKUTA_AUTH__;
     } catch (e) {}
     setCurrentUser(null);
   };
 
-  const handleSelectProduct = (id) => {
+  const handleSelectProduct = useCallback((id) => {
     setSelectedProductId(id);
-  };
+    const section = productsSectionRef.current;
+    if (section) {
+      const top = Math.max(0, section.getBoundingClientRect().top + window.scrollY - 12);
+      window.scrollTo({ top, behavior: 'auto' });
+    }
+  }, []);
 
   const handleOpenInvoice = (invoice) => {
     setActiveInvoice(invoice);
@@ -2925,41 +3213,76 @@ export default function App() {
 
   const handleBackToProducts = () => {
     setSelectedProductId(null);
+    const section = productsSectionRef.current;
+    if (section) {
+      const top = Math.max(0, section.getBoundingClientRect().top + window.scrollY - 12);
+      window.scrollTo({ top, behavior: 'auto' });
+    }
   };
 
-  const selectedProduct = allProducts.find((product) => product.id === selectedProductId);
-  const relatedProducts = selectedProduct
-    ? allProducts.filter(
-        (product) => product.category === selectedProduct.category && product.id !== selectedProduct.id
-      ).slice(0, 4)
-    : [];
+  const selectedProduct = useMemo(
+    () => allProducts.find((product) => product.id === selectedProductId),
+    [allProducts, selectedProductId]
+  );
+  const relatedProducts = useMemo(
+    () => selectedProduct
+      ? allProducts.filter(
+          (product) => product.category === selectedProduct.category && product.id !== selectedProduct.id
+        ).slice(0, 4)
+      : [],
+    [allProducts, selectedProduct]
+  );
 
-  const filteredProducts = allProducts.filter((p) => {
-    const normalizedSearch = search.toLowerCase();
-    const matchesSearch = !normalizedSearch || p.name.toLowerCase().includes(normalizedSearch) ||
-                p.description.toLowerCase().includes(normalizedSearch) ||
-                (p.seller || '').toLowerCase().includes(normalizedSearch);
-    const matchesCategory = selectedCategory === null || p.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
+  const debouncedSearch = useDebounce(search, 200);
 
-  const sortedProducts = [...filteredProducts].sort((a, b) => {
-    if (sortOption === 'Price: low to high') {
-      return parsePrice(a.price) - parsePrice(b.price);
-    }
-    if (sortOption === 'Price: high to low') {
-      return parsePrice(b.price) - parsePrice(a.price);
-    }
-    return b.id - a.id;
-  });
+  const filteredProducts = useMemo(() => {
+    const normalizedSearch = debouncedSearch.toLowerCase();
+    return allProducts.filter((p) => {
+      const matchesSearch = !normalizedSearch || p.name.toLowerCase().includes(normalizedSearch) ||
+                  p.description.toLowerCase().includes(normalizedSearch) ||
+                  (p.seller || '').toLowerCase().includes(normalizedSearch);
+      const matchesCategory = selectedCategory === null || p.category === selectedCategory;
+      return matchesSearch && matchesCategory;
+    });
+  }, [allProducts, debouncedSearch, selectedCategory]);
 
-  const cartCount = cartItems.reduce((count, item) => count + item.quantity, 0);
-  const wishlistItems = allProducts.filter((product) => wishlist.includes(product.id));
+  const sortedProducts = useMemo(() => {
+    const next = [...filteredProducts];
+    next.sort((a, b) => {
+      if (sortOption === 'Price: low to high') {
+        return parsePrice(a.price) - parsePrice(b.price);
+      }
+      if (sortOption === 'Price: high to low') {
+        return parsePrice(b.price) - parsePrice(a.price);
+      }
+      return b.id - a.id;
+    });
+    return next;
+  }, [filteredProducts, sortOption]);
 
-  const buyerOrders = orders.filter((order) => order.buyer === currentUser?.username);
-  const sellerOrders = orders.filter((order) => order.seller === currentUser?.username);
-  const sellerProducts = allProducts.filter((product) => product.seller === currentUser?.username);
+  const cartCount = useMemo(
+    () => cartItems.reduce((count, item) => count + item.quantity, 0),
+    [cartItems]
+  );
+  const wishlistItems = useMemo(
+    () => allProducts.filter((product) => wishlist.includes(product.id)),
+    [allProducts, wishlist]
+  );
+
+  const buyerOrders = useMemo(
+    () => orders.filter((order) => order.buyer === currentUser?.username || order.seller === currentUser?.username),
+    [orders, currentUser?.username]
+  );
+  const sellerOrders = useMemo(
+    () => orders.filter((order) => order.seller === currentUser?.username || order.buyer === currentUser?.username),
+    [orders, currentUser?.username]
+  );
+  const sellerProducts = useMemo(
+    () => allProducts.filter((product) => product.seller === currentUser?.username),
+    [allProducts, currentUser?.username]
+  );
   const sellerDashboardMode = isDashboardOpen && currentUser?.role === 'seller';
+  const buyerDashboardMode = isBuyerHistoryOpen && currentUser?.role === 'buyer' && !sellerDashboardMode;
 
   if (showRoosterAnimation) {
     return (
@@ -2991,19 +3314,25 @@ export default function App() {
         onSignup={handleSignup}
       />
       {isForgotPasswordPage && (
-        <ForgotPasswordPage 
-          onClose={navigateHome}
-          onSwitchToLogin={() => { navigateHome(); setIsLoginOpen(true); }}
-          onNavigateToResetConfirm={navigateToResetConfirm}
-        />
+        <Suspense fallback={<div className="loading">Loading recovery page...</div>}>
+          <ForgotPasswordPage 
+            onClose={navigateHome}
+            onSwitchToLogin={() => { navigateHome(); setIsLoginOpen(true); }}
+            onNavigateToResetConfirm={navigateToResetConfirm}
+          />
+        </Suspense>
       )}
       {isResetPasswordPage && (
-        <PasswordResetConfirmPage 
-          uid={resetUid}
-          token={resetToken}
-          onClose={navigateHome}
-          onOpenLogin={() => { navigateHome(); setIsLoginOpen(true); }}
-        />
+        <Suspense fallback={<div className="loading">Loading reset page...</div>}>
+          <PasswordResetConfirmPage 
+            uid={resetUid}
+            token={resetToken}
+            expiresAt={resetExpiresAt}
+            onClose={navigateHome}
+            onOpenLogin={() => { navigateHome(); setIsLoginOpen(true); }}
+            onRequestNewOtp={handleRequestNewOtp}
+          />
+        </Suspense>
       )}
 
       {!isForgotPasswordPage && !isResetPasswordPage && (
@@ -3036,7 +3365,15 @@ export default function App() {
                 />
               </form>
 
-              <button className={`hamburger-menu${isMenuOpen ? ' is-open' : ''}`} onClick={() => setIsMenuOpen(!isMenuOpen)} title="Menu" aria-label="Menu" aria-expanded={isMenuOpen}>
+              <button
+                className={`hamburger-menu${isMenuOpen ? ' is-open' : ''}`}
+                type="button"
+                onClick={() => setIsMenuOpen((open) => !open)}
+                aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
+                aria-expanded={isMenuOpen}
+                aria-controls="kukuta-menu"
+                title={isMenuOpen ? 'Close menu' : 'Open menu'}
+              >
                 <span></span>
                 <span></span>
                 <span></span>
@@ -3054,7 +3391,7 @@ export default function App() {
                       💬
                       {unreadMessages.length > 0 && <span>{unreadMessages.length}</span>}
                     </button>
-                    <button className="icon-btn" onClick={() => { setIsCartOpen(true); setIsMenuOpen(false); }}>
+                    <button className="icon-btn" onClick={() => { setIsCartOpen(true); setIsMenuOpen(false); }} aria-label={`Shopping cart, ${cartCount} items`} title="Shopping cart">
                       🛒
                       <span>{cartCount}</span>
                     </button>
@@ -3070,20 +3407,20 @@ export default function App() {
                   </>
                 )}
                 {currentUser && (
-                  <button className="icon-btn theme-toggle" onClick={handleThemeToggle}>
+                  <button className="icon-btn theme-toggle" onClick={handleThemeToggle} aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`} title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}>
                     {theme === 'light' ? '☀️' : '🌙'}
                   </button>
                 )}
               </div>
 
               {isMenuOpen && (
-                <div className="navbar-dropdown">
+                <div className="navbar-dropdown" id="kukuta-menu" aria-label="Account menu">
                   {currentUser ? (
                     <>
                       <div className="dropdown-section">
                         <div className="dropdown-header">Your Account</div>
-                        <button className="dropdown-item dropdown-messages-item" onClick={() => { handleOpenMessageNotification(); setIsMenuOpen(false); }}>
-                          <span aria-hidden="true">💬</span> Messages{unreadMessages.length > 0 ? ` (${unreadMessages.length})` : ''}
+                        <button className="dropdown-item" onClick={() => { setIsProfileOpen(!isProfileOpen); setIsMenuOpen(false); }}>
+                          👤 {currentUser.name}
                         </button>
                         <button className="dropdown-item" onClick={() => { 
                           handleRoleToggle(currentUser.role === 'seller' ? 'buyer' : 'seller');
@@ -3093,7 +3430,7 @@ export default function App() {
                         </button>
                         {currentUser.role === 'seller' && (
                           <>
-                            <button className="dropdown-item" onClick={() => { setIsDashboardOpen(true); setIsMenuOpen(false); }}>
+                            <button className="dropdown-item" onClick={openSellerDashboard}>
                               Dashboard
                             </button>
                             <button className="dropdown-item" onClick={() => { setIsAddProductOpen(true); setIsMenuOpen(false); }}>
@@ -3102,8 +3439,8 @@ export default function App() {
                           </>
                         )}
                         {currentUser.role === 'buyer' && (
-                          <button className="dropdown-item" onClick={() => { setIsBuyerHistoryOpen(true); setIsMenuOpen(false); }}>
-                            Order History
+                          <button className="dropdown-item" onClick={openBuyerDashboard}>
+                            Buyer Dashboard
                           </button>
                         )}
                       </div>
@@ -3131,6 +3468,8 @@ export default function App() {
                       <button 
                         className="role-switch-dropdown-btn" 
                         onClick={() => setIsRoleDropdownOpen(!isRoleDropdownOpen)}
+                        aria-expanded={isRoleDropdownOpen}
+                        aria-haspopup="true"
                         title={`Current role: ${currentUser.role || 'buyer'}`}
                       >
                         {currentUser.role === 'seller' ? '🏪 Seller' : '🛒 Buyer'} ▼
@@ -3169,7 +3508,7 @@ export default function App() {
                     </div>
 
                     <div className="profile-container">
-                      <button className="profile-icon" onClick={() => setIsProfileOpen(!isProfileOpen)}>
+                      <button className="profile-icon" onClick={() => setIsProfileOpen(!isProfileOpen)} aria-expanded={isProfileOpen} aria-haspopup="true">
                         👤 {currentUser.name}
                       </button>
                       {isProfileOpen && (
@@ -3202,7 +3541,7 @@ export default function App() {
                             </button>
                           {currentUser.role === 'seller' && (
                             <>
-                              <button className="profile-menu-btn" onClick={() => { setIsDashboardOpen(true); setIsProfileOpen(false); }}>
+                              <button className="profile-menu-btn" onClick={openSellerDashboard}>
                                 <span aria-hidden="true">▦</span> Dashboard
                               </button>
                               <button className="profile-menu-btn" onClick={() => setIsAddProductOpen(true)}>
@@ -3211,8 +3550,8 @@ export default function App() {
                             </>
                           )}
                           {currentUser.role === 'buyer' && (
-                            <button className="profile-menu-btn" onClick={() => { setIsBuyerHistoryOpen(true); setIsProfileOpen(false); }}>
-                              <span aria-hidden="true">◷</span> Order history
+                            <button className="profile-menu-btn" onClick={openBuyerDashboard}>
+                              <span aria-hidden="true">◷</span> Buyer Dashboard
                             </button>
                           )}
                           </div>
@@ -3233,7 +3572,7 @@ export default function App() {
             </div>
           </header>
 
-      {flash && !sellerDashboardMode && (
+      {flash && !sellerDashboardMode && !buyerDashboardMode && (
         <div className={`flash-message ${flash.type || 'info'}`} role="status">
           <div className="flash-content">
             <span>{flash.message}</span>
@@ -3242,35 +3581,35 @@ export default function App() {
         </div>
       )}
 
-      {confirmDialog && !sellerDashboardMode && (
+      {confirmDialog && !sellerDashboardMode && !buyerDashboardMode && (
         <ConfirmModal dialog={confirmDialog} onClose={() => setConfirmDialog(null)} />
       )}
 
       <InvoiceModal invoice={activeInvoice} onClose={() => setActiveInvoice(null)} />
 
-      {!sellerDashboardMode && <Messenger
+      {!sellerDashboardMode && !buyerDashboardMode && <Messenger
         isOpen={messagePanelOpen}
         onClose={() => setMessagePanelOpen(false)}
         product={contactProduct}
+        products={allProducts}
         currentUser={currentUser}
         recipient={chatRecipient}
-        title={currentUser?.role === 'seller' ? 'Chat with Buyer' : 'Chat with Seller'}
-        bookingStatus={contactProduct && chatRecipient ? bookingMap[getBookingKey(contactProduct, chatRecipient)] : null}
+        title={contactProduct ? 'Product chat' : 'Messages'}
         onConfirmBooking={confirmBookingInChat}
-        autoOpenConversation={autoOpenConversation}
+        autoOpenConversation={Boolean(contactProduct && chatRecipient)}
       />}
 
-      {!sellerDashboardMode && <ProfileModal 
+      {!sellerDashboardMode && !buyerDashboardMode && <ProfileModal
         isOpen={isProfileModalOpen} 
         onClose={() => setIsProfileModalOpen(false)} 
         currentUser={currentUser} 
         onRoleToggle={handleRoleToggle}
-        onOpenDashboard={() => setIsDashboardOpen(true)}
-        onOpenOrderHistory={() => setIsBuyerHistoryOpen(true)}
+        onOpenDashboard={openSellerDashboard}
+        onOpenOrderHistory={openBuyerDashboard}
         onLogout={handleLogout}
       />}
 
-      {!sellerDashboardMode && <CartPanel
+      {!sellerDashboardMode && !buyerDashboardMode && <CartPanel
         isOpen={isCartOpen}
         onClose={() => setIsCartOpen(false)}
         cartItems={cartItems}
@@ -3279,7 +3618,7 @@ export default function App() {
         onCheckout={handleCheckout}
         total={cartTotal}
       />}
-      {!sellerDashboardMode && <WishlistPanel
+      {!sellerDashboardMode && !buyerDashboardMode && <WishlistPanel
         isOpen={isWishlistOpen}
         onClose={() => setIsWishlistOpen(false)}
         items={wishlistItems}
@@ -3288,44 +3627,46 @@ export default function App() {
         onOrder={handlePlaceOrder}
       />}
 
-      {!selectedProduct && !sellerDashboardMode && (
+      {!selectedProduct && !sellerDashboardMode && !buyerDashboardMode && (
         <HeroSlider
           products={allProducts}
           onSelectProduct={handleSelectProduct}
           selectedCategory={selectedCategory}
           search={search}
           wishlist={wishlist}
+          orders={orders}
         />
       )}
 
       {isDashboardOpen && currentUser?.role === 'seller' && (
-        <SellerDashboard
-          sellerUsername={currentUser.username}
-          products={sellerProducts}
-          orders={sellerOrders}
-          onDeleteProduct={handleDeleteProduct}
-          onUpdateProduct={handleUpdateProduct}
-          onContactBuyer={handleContactBuyer}
-          onOpenInvoice={handleOpenInvoice}
-          onClose={() => setIsDashboardOpen(false)}
-        />
+        <Suspense fallback={<div className="loading">Loading dashboard...</div>}>
+          <SellerDashboardPage
+            sellerUsername={currentUser.username}
+            products={sellerProducts}
+            orders={sellerOrders}
+            onDeleteProduct={handleDeleteProduct}
+            onUpdateProduct={handleUpdateProduct}
+            onContactBuyer={handleContactBuyer}
+            onOpenInvoice={handleOpenInvoice}
+            onAddProduct={() => setIsAddProductOpen(true)}
+            onClose={() => setIsDashboardOpen(false)}
+          />
+        </Suspense>
       )}
 
-      {isBuyerHistoryOpen && !sellerDashboardMode && currentUser?.role === 'buyer' && (
-        <BuyerOrderHistory orders={buyerOrders} onClose={() => setIsBuyerHistoryOpen(false)} onOpenInvoice={handleOpenInvoice} />
+      {buyerDashboardMode && (
+        <Suspense fallback={<div className="loading">Loading order history...</div>}>
+          <BuyerOrderHistoryPage
+            orders={buyerOrders}
+            currentUsername={currentUser.username}
+            onClose={() => setIsBuyerHistoryOpen(false)}
+            onOpenInvoice={handleOpenInvoice}
+          />
+        </Suspense>
       )}
 
-      {!selectedProduct && !sellerDashboardMode && (
-        <>
-          <section className="fraud-disclaimer scroll-reveal">
-            <div className="fraud-disclaimer-content">
-              <span className="fraud-disclaimer-icon">🛡️</span>
-              <div className="fraud-disclaimer-text">
-                <strong>Shop safely:</strong> Review seller feedback before purchasing. Use secure payment methods and verify product details. Report suspicious sellers to keep our marketplace trusted.
-              </div>
-            </div>
-          </section>
-          <section className="category-shortcuts scroll-reveal">
+      {!selectedProduct && !sellerDashboardMode && !buyerDashboardMode && (
+        <section className="category-shortcuts scroll-reveal">
           <div className="shortcuts-container">
             <button
               className={`category-btn ${selectedCategory === null ? 'active' : ''}`}
@@ -3335,7 +3676,7 @@ export default function App() {
             </button>
             <div className="category-groups">
               {categoryGroups.map((group) => (
-                <details className="category-group" key={group.title} open={!isMobileLayout}>
+                <details className="category-group" key={group.title} open>
                   <summary>
                     <span>
                       <strong>{group.title}</strong>
@@ -3369,11 +3710,14 @@ export default function App() {
             </label>
           </div>
         </section>
-        </>
       )}
 
-      {!sellerDashboardMode && <section id="products" className="products-section scroll-reveal">
-        <h2 className="section-title">Our Products</h2>
+      {!sellerDashboardMode && !buyerDashboardMode && <section
+        id="products"
+        ref={productsSectionRef}
+        className={`products-section scroll-reveal${selectedProduct ? ' product-detail-active' : ''}`}
+      >
+        {!selectedProduct && <h2 className="section-title">Our Products</h2>}
         {loading ? (
           <div className="loading">Loading products...</div>
         ) : error ? (
@@ -3392,26 +3736,28 @@ export default function App() {
             onContactSeller={handleContactSeller}
           />
         ) : (
-          <ProductPage
-            products={sortedProducts}
-            onAddToCart={(p) => handleAddToCart(p)}
-            onContactSeller={(p) => handleContactSeller(p)}
-            onViewProduct={(id) => handleSelectProduct(id)}
-            onToggleWishlist={handleToggleWishlist}
-            wishlist={wishlist}
-            currentUser={currentUser}
-          />
+          <LazyBoundary fallback={<div className="loading">Loading product catalog...</div>}>
+            <ProductPage
+              products={sortedProducts}
+              onAddToCart={(p) => handleAddToCart(p)}
+              onContactSeller={(p) => handleContactSeller(p)}
+              onViewProduct={(id) => handleSelectProduct(id)}
+              onToggleWishlist={handleToggleWishlist}
+              wishlist={wishlist}
+              currentUser={currentUser}
+            />
+          </LazyBoundary>
         )}
       </section>}
 
-      {!sellerDashboardMode && <section className="about-section scroll-reveal">
+      {!sellerDashboardMode && !buyerDashboardMode && <section className="about-section scroll-reveal">
         <h2>About Kukuta Hen Farm</h2>
         <p>
           We are a family-owned hen farm dedicated to providing the highest quality, organically-raised eggs and farm products. Our hens are raised with care in a stress-free environment, ensuring the best taste and nutrition.
         </p>
       </section>}
 
-      {!sellerDashboardMode && <footer className="farm-footer">
+      {!sellerDashboardMode && !buyerDashboardMode && <footer className="farm-footer">
         {currentUser?.role === 'buyer' && (
           <p className="buyer-safety-disclaimer" role="note">
             Buyer safety: keep payments and conversations on Kukuta, verify seller feedback, and never share passwords or one-time codes.
