@@ -23,13 +23,25 @@ load_dotenv(BASE_DIR / '.env')
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-qadc2$_t3e^h%y=0=!!a&n(r_+dd%_g630^-^=c$3ab(3s1#qb')
-
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
 
-ALLOWED_HOSTS = os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# SECURITY WARNING: keep the secret key used in production secret!
+_configured_secret_key = os.environ.get('DJANGO_SECRET_KEY')
+if not DEBUG and (
+    not _configured_secret_key
+    or _configured_secret_key.startswith('django-insecure-')
+):
+    raise ImproperlyConfigured('Set a strong DJANGO_SECRET_KEY in production.')
+SECRET_KEY = _configured_secret_key or 'django-insecure-qadc2$_t3e^h%y=0=!!a&n(r_+dd%_g630^-^=c$3ab(3s1#qb'
+
+ALLOWED_HOSTS = [
+    host.strip()
+    for host in os.environ.get('DJANGO_ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+    if host.strip()
+]
+if not DEBUG and not os.environ.get('DJANGO_ALLOWED_HOSTS'):
+    raise ImproperlyConfigured('Set DJANGO_ALLOWED_HOSTS to the production host.')
 CSRF_TRUSTED_ORIGINS = [
     'http://localhost:5173',
     'http://127.0.0.1:5173',
@@ -58,7 +70,10 @@ CORS_ALLOW_ALL_ORIGINS = False
 if DEBUG:
     CORS_ALLOW_ALL_ORIGINS = True
 
-SECURE_SSL_REDIRECT = os.environ.get('DJANGO_SECURE_SSL_REDIRECT', '0') == '1'
+SECURE_SSL_REDIRECT = os.environ.get(
+    'DJANGO_SECURE_SSL_REDIRECT',
+    '0' if DEBUG else '1',
+) == '1'
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
@@ -66,8 +81,14 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_BROWSER_XSS_FILTER = True
 SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SESSION_COOKIE_SECURE = os.environ.get('DJANGO_SECURE_COOKIE', '0') == '1'
-CSRF_COOKIE_SECURE = os.environ.get('DJANGO_SECURE_COOKIE', '0') == '1'
+SESSION_COOKIE_SECURE = os.environ.get(
+    'DJANGO_SECURE_COOKIE',
+    '0' if DEBUG else '1',
+) == '1'
+CSRF_COOKIE_SECURE = os.environ.get(
+    'DJANGO_SECURE_COOKIE',
+    '0' if DEBUG else '1',
+) == '1'
 SESSION_COOKIE_HTTPONLY = True
 # Allow the browser to read the CSRF cookie so the React app can attach
 # X-CSRFToken headers on POST/PUT/DELETE requests.
@@ -318,8 +339,8 @@ REST_FRAMEWORK = {
         'rest_framework.throttling.AnonRateThrottle',
     ],
     'DEFAULT_THROTTLE_RATES': {
-        'user': os.environ.get('DJANGO_USER_THROTTLE_RATE', '1000000/minute'),
-        'anon': os.environ.get('DJANGO_ANON_THROTTLE_RATE', '1000000/minute'),
+        'user': os.environ.get('DJANGO_USER_THROTTLE_RATE', '1000/minute'),
+        'anon': os.environ.get('DJANGO_ANON_THROTTLE_RATE', '100/minute'),
     },
     # Security and validation
     'DEFAULT_FILTER_BACKENDS': [
@@ -332,22 +353,6 @@ REST_FRAMEWORK = {
     # CORS and content negotiation
     'DEFAULT_CONTENT_NEGOTIATION_CLASS': 'rest_framework.negotiation.DefaultContentNegotiation',
 }
-
-SECURE_SSL_REDIRECT = os.environ.get('DJANGO_SECURE_SSL_REDIRECT', '0') == '1'
-SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
-SECURE_HSTS_INCLUDE_SUBDOMAINS = True
-SECURE_HSTS_PRELOAD = True
-SECURE_CONTENT_TYPE_NOSNIFF = True
-SECURE_BROWSER_XSS_FILTER = True
-SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
-SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
-SESSION_COOKIE_SECURE = os.environ.get('DJANGO_SECURE_COOKIE', '0') == '1'
-CSRF_COOKIE_SECURE = os.environ.get('DJANGO_SECURE_COOKIE', '0') == '1'
-SESSION_COOKIE_HTTPONLY = True
-CSRF_COOKIE_HTTPONLY = False
-SESSION_COOKIE_SAMESITE = 'Lax'
-CSRF_COOKIE_SAMESITE = 'Lax'
-X_FRAME_OPTIONS = 'DENY'
 
 # ============================================================================
 # CACHING CONFIGURATION
@@ -377,8 +382,8 @@ CACHE_TIMEOUT_SHORT = 300       # 5 minutes
 CACHE_TIMEOUT_MEDIUM = 3600     # 1 hour
 CACHE_TIMEOUT_LONG = 86400      # 24 hours
 
-# Shared API budget: one million requests across all API workers per minute.
-API_REQUEST_MINUTE_LIMIT = int(os.environ.get('API_REQUEST_MINUTE_LIMIT', '1000000'))
+# Shared API budget across all workers, with endpoint-specific limits applied separately.
+API_REQUEST_MINUTE_LIMIT = int(os.environ.get('API_REQUEST_MINUTE_LIMIT', '10000'))
 
 # ============================================================================
 # DATABASE OPTIMIZATION

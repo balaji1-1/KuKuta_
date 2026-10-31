@@ -65,7 +65,7 @@ const ProductPage = React.memo(function ProductPage({ products = [], onAddToCart
       {displayProducts.map((p) => (
         <article
           key={p.id}
-          className="product-card clickable"
+          className="product-card clickable product-grid-card-enter"
           onClick={() => onViewProduct(p.id)}
           tabIndex={0}
           onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') onViewProduct(p.id); }}

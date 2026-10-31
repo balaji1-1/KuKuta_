@@ -1,7 +1,7 @@
 /* Wordmark splash shown during initial app loading. */
 .wordmark-splash {
   background:
-    radial-gradient(circle at 50% 42%, rgba(243, 217, 130, 0.18), transparent 22%),
+    radial-gradient(circle at 50% 43%, rgba(243, 217, 130, 0.2), transparent 24%),
     linear-gradient(135deg, #102c1b 0%, #183f2d 52%, #0b1b12 100%);
 }
 
@@ -9,6 +9,58 @@
   width: min(90vw, 760px);
   text-align: center;
   color: white;
+}
+
+.splash-emblem {
+  position: relative;
+  display: grid;
+  width: 78px;
+  height: 78px;
+  margin: 0 auto 1.15rem;
+  place-items: center;
+  border: 1px solid rgba(243, 217, 130, 0.44);
+  border-radius: 50%;
+  background: linear-gradient(145deg, rgba(255, 255, 255, 0.13), rgba(255, 255, 255, 0.03));
+  box-shadow: 0 0 42px rgba(243, 217, 130, 0.12), inset 0 0 20px rgba(255, 255, 255, 0.05);
+  animation: splash-emblem-float 2.4s ease-in-out infinite;
+}
+
+.splash-emblem-mark {
+  color: #f3d982;
+  font-size: 2.5rem;
+  font-weight: 900;
+  line-height: 1;
+  text-shadow: 0 5px 20px rgba(243, 217, 130, 0.3);
+}
+
+.splash-orbit {
+  position: absolute;
+  inset: -7px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 50%;
+  animation: splash-orbit-spin 5s linear infinite;
+}
+
+.splash-orbit span {
+  position: absolute;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f3d982;
+  box-shadow: 0 0 12px rgba(243, 217, 130, 0.8);
+}
+
+.splash-orbit span:nth-child(1) { top: 4px; left: 50%; }
+.splash-orbit span:nth-child(2) { right: 7px; bottom: 14px; width: 5px; height: 5px; }
+.splash-orbit span:nth-child(3) { bottom: 6px; left: 22%; width: 4px; height: 4px; }
+
+@keyframes splash-emblem-float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-5px); }
+}
+
+@keyframes splash-orbit-spin {
+  to { transform: rotate(360deg); }
 }
 
 .wordmark-letters {
@@ -26,7 +78,7 @@
   opacity: 0;
   transform: translateY(24px) scale(0.8);
   animation: wordmark-letter-in 0.55s cubic-bezier(0.22, 1, 0.36, 1) forwards;
-  animation-delay: calc(var(--letter-index) * 0.18s);
+  animation-delay: calc(var(--letter-index) * 0.1s);
   color: #fff;
   text-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
 }
@@ -46,8 +98,7 @@
   background: #f3d982;
   transform: scaleX(0);
   transform-origin: center;
-  animation: wordmark-rule-in 0.6s ease forwards;
-  animation-delay: 1.25s;
+  animation: wordmark-rule-in 0.6s ease 0.72s forwards;
 }
 
 @keyframes wordmark-rule-in {
@@ -61,18 +112,64 @@
   letter-spacing: 0.18em;
   text-transform: uppercase;
   opacity: 0;
-  animation: wordmark-caption-in 0.6s ease forwards;
-  animation-delay: 1.45s;
+  animation: wordmark-caption-in 0.6s ease 0.9s forwards;
 }
 
 @keyframes wordmark-caption-in {
   to { opacity: 1; }
 }
 
+.splash-loading {
+  display: grid;
+  width: min(240px, 58vw);
+  gap: 0.7rem;
+  margin: 1.5rem auto 0;
+  opacity: 0;
+  animation: wordmark-caption-in 0.5s ease 1.05s forwards;
+}
+
+.splash-loading-track {
+  display: block;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.splash-loading-track span {
+  display: block;
+  width: 38%;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, #d6bd67, #fff0ae, #d6bd67);
+  box-shadow: 0 0 14px rgba(243, 217, 130, 0.55);
+  animation: splash-loading-sweep 1.1s ease-in-out infinite;
+}
+
+.splash-loading-label {
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.65rem;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+@keyframes splash-loading-sweep {
+  from { transform: translateX(-110%); }
+  to { transform: translateX(275%); }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .splash-emblem,
+  .splash-orbit,
+  .splash-loading-track span {
+    animation: none;
+  }
+
   .wordmark-letters span,
   .wordmark-rule,
-  .wordmark-content p {
+  .wordmark-content p,
+  .splash-loading {
     animation: none;
     opacity: 1;
     transform: none;

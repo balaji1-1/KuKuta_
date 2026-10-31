@@ -2,6 +2,7 @@ import React, { lazy, Suspense, useState, useEffect, useMemo, useRef, useCallbac
 import RoosterSplash from './RoosterSplash';
 import ProductCard from './ProductCard';
 import Messenger from './Messenger';
+import SupportChat from './SupportChat';
 import apiFetch, { storeAuthTokens } from './api';
 import { LazyBoundary, useDebounce } from './performance.jsx';
 
@@ -1020,7 +1021,6 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
   const [videoUploadError, setVideoUploadError] = useState('');
   const [imageUrls, setImageUrls] = useState([]);
   const [videoUrls, setVideoUrls] = useState([]);
-  const [audioUrls, setAudioUrls] = useState([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
@@ -1093,18 +1093,6 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
 
   const removeVideoUrl = (index) => {
     setVideoUrls(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const addAudioUrl = () => {
-    setAudioUrls(prev => [...prev, '']);
-  };
-
-  const updateAudioUrl = (index, url) => {
-    setAudioUrls(prev => prev.map((item, i) => i === index ? url : item));
-  };
-
-  const removeAudioUrl = (index) => {
-    setAudioUrls(prev => prev.filter((_, i) => i !== index));
   };
 
   const showDaysOldField = category === 'Egg*Chicks';
@@ -1241,10 +1229,6 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
       formData.append(`video_urls[${index}]`, url);
     });
 
-    audioUrls.filter(url => url.trim()).forEach((url, index) => {
-      formData.append(`audio_urls[${index}]`, url);
-    });
-
     const success = await onAddProduct(formData);
     if (!success || success.success === false) {
       const errors = success?.errors || {};
@@ -1273,7 +1257,6 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
     setVideos([]);
     setImageUrls([]);
     setVideoUrls([]);
-    setAudioUrls([]);
     setBirdType('Breeding Hen');
     setAge('');
     setDaysOld('');
@@ -1287,11 +1270,23 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
     <div className="modal-overlay" onClick={onClose}>
       <div className="modal product-modal" onClick={(e) => e.stopPropagation()}>
         <div className="modal-header">
-          <h2>Add New Product</h2>
-          <button className="modal-close" onClick={onClose}>×</button>
+          <div className="product-modal-heading">
+            <span className="product-modal-eyebrow">Seller workspace</span>
+            <h2>Add a product</h2>
+            <p>Create a clear listing buyers can trust.</p>
+          </div>
+          <button type="button" className="modal-close" onClick={onClose} aria-label="Close add product form">×</button>
         </div>
         <form onSubmit={handleSubmit} className="auth-form product-form" encType="multipart/form-data">
           <div className="product-form-grid">
+            <div className="form-section-heading form-span-2">
+              <span className="form-section-number">01</span>
+              <div>
+                <h3>Product details</h3>
+                <p>Start with the name, price, and available quantity.</p>
+              </div>
+            </div>
+
             <div className="form-group form-span-2">
               <label htmlFor="product-name">Product Name</label>
               <input
@@ -1407,6 +1402,14 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
               </div>
             )}
 
+            <div className="form-section-heading form-span-2">
+              <span className="form-section-number">02</span>
+              <div>
+                <h3>Category and specifics</h3>
+                <p>Help buyers find the right product and understand its details.</p>
+              </div>
+            </div>
+
             <div className="form-group form-span-2">
               <label htmlFor="product-category">Category</label>
               <select
@@ -1492,6 +1495,13 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
 
             {category === 'Egg*Chicks' && (
               <>
+                <div className="form-section-heading form-span-2">
+                  <span className="form-section-number">03</span>
+                  <div>
+                    <h3>Breeder media</h3>
+                    <p>Add optional photos or videos of the hen and rooster.</p>
+                  </div>
+                </div>
                 <div className="form-group breeder-media-section">
                   <label htmlFor="breeder-hen-media">Breeder Hen Photos/Videos</label>
                   <div className="file-upload-section">
@@ -1548,6 +1558,14 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
               </div>
             )}
 
+            <div className="form-section-heading form-span-2">
+              <span className="form-section-number">{category === 'Egg*Chicks' ? '04' : '03'}</span>
+              <div>
+                <h3>Description and media</h3>
+                <p>Show buyers what makes your listing worth a closer look.</p>
+              </div>
+            </div>
+
             <div className="form-group">
               <label htmlFor="product-description">Description</label>
               <textarea
@@ -1563,8 +1581,9 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
             </div>
 
             {/* Image Upload Section */}
-            <div className="form-group">
+            <div className="form-group media-field">
               <label>Product Images</label>
+              <span className="field-hint">Add clear photos to help buyers see what you’re offering.</span>
               <div className="file-upload-section">
                 <input
                   type="file"
@@ -1613,8 +1632,9 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
             </div>
 
             {/* Video Upload Section */}
-            <div className="form-group">
+            <div className="form-group media-field">
               <label>Product Videos</label>
+              <span className="field-hint">Optional. Short videos can help show the product in use.</span>
               <div className="file-upload-section">
                 <input
                   type="file"
@@ -1661,33 +1681,13 @@ function AddProductModal({ isOpen, onClose, onAddProduct, userName }) {
               ))}
             </div>
 
-            <div className="form-group">
-              <label>Product Audio URL</label>
-              <div className="file-upload-section">
-                <button type="button" onClick={addAudioUrl} className="url-add-btn">
-                  🔗 Add Audio URL
-                </button>
-              </div>
-              <span className="field-hint">Audio files can no longer be uploaded here; add a publicly accessible audio URL instead.</span>
-              {audioUrls.map((url, index) => (
-                <div className="url-input-group" key={`audio-url-${index}`}>
-                  <input
-                    type="url"
-                    value={url}
-                    onChange={(e) => updateAudioUrl(index, e.target.value)}
-                    placeholder="https://example.com/audio.mp3"
-                    aria-label={`Product audio URL ${index + 1}`}
-                  />
-                  <button type="button" aria-label={`Remove audio URL ${index + 1}`} onClick={() => removeAudioUrl(index)}>×</button>
-                </div>
-              ))}
-            </div>
           </div>
 
           <div className="form-actions">
             {formSuccess && <div className="form-success" role="status">{formSuccess}</div>}
+            <span className="form-required-note">* Required fields</span>
             <button type="submit" className="auth-btn" disabled={isSubmitting} aria-busy={isSubmitting}>
-              {isSubmitting ? 'Adding product…' : 'Add Product'}
+              {isSubmitting ? 'Adding product…' : 'Publish product'}
             </button>
           </div>
         </form>
@@ -1821,6 +1821,12 @@ const HeroSlider = React.memo(function HeroSlider({ products = [], onSelectProdu
             aria-hidden={index !== currentSlide}
             inert={index !== currentSlide}
           >
+            <div className="hero-wave-layer" aria-hidden="true">
+              <svg viewBox="0 0 2880 140" preserveAspectRatio="none">
+                <path className="hero-wave hero-wave-back" d="M0 78 C240 18 480 138 720 78 S1200 18 1440 78 S1920 138 2160 78 S2640 18 2880 78 V140 H0Z" />
+                <path className="hero-wave hero-wave-front" d="M0 102 C240 150 480 54 720 102 S1200 150 1440 102 S1920 54 2160 102 S2640 150 2880 102 V140 H0Z" />
+              </svg>
+            </div>
             <div className="hero-slide-inner">
               <div className="hero-copy">
                 <span className="hero-badge">Fresh from Kukuta</span>
@@ -2113,7 +2119,7 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
   };
 
   return (
-    <section className="product-detail-page">
+    <section className="product-detail-page" aria-label={`${product.name} product details`}>
       <button className="back-button" onClick={onBack}>← Back to products</button>
       <div className="product-detail-layout">
         <div className="product-detail-card">
@@ -2193,7 +2199,7 @@ function ProductDetail({ product, relatedProducts, onBack, onOrder, onViewRelate
             )}
           </div>
 
-          <div className="product-detail-info">
+          <div className="product-detail-info product-detail-info-reveal">
             <h2>{product.name}</h2>
             {product.seller && <p className="seller-info">Sold by {product.seller}</p>}
             <p className="product-description">{product.description}</p>
@@ -2415,7 +2421,6 @@ export default function App() {
   const [resetExpiresAt, setResetExpiresAt] = useState('');
   const [isDashboardOpen, setIsDashboardOpen] = useState(false);
   const [isRoleDropdownOpen, setIsRoleDropdownOpen] = useState(false);
-  const [isMenuOpen, setIsMenuOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [isProfileDropdownOpen, setIsProfileDropdownOpen] = useState(false);
   const [isBuyerHistoryOpen, setIsBuyerHistoryOpen] = useState(false);
@@ -2805,14 +2810,12 @@ export default function App() {
     setSelectedProductId(null);
     setIsDashboardOpen(false);
     setIsBuyerHistoryOpen(false);
-    setIsMenuOpen(false);
   };
 
   const openBuyerDashboard = () => {
     setSelectedProductId(null);
     setIsBuyerHistoryOpen(true);
     setIsDashboardOpen(false);
-    setIsMenuOpen(false);
     setIsProfileOpen(false);
     setIsProfileModalOpen(false);
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -2822,7 +2825,6 @@ export default function App() {
     setSelectedProductId(null);
     setIsDashboardOpen(true);
     setIsBuyerHistoryOpen(false);
-    setIsMenuOpen(false);
     setIsProfileOpen(false);
     setIsProfileModalOpen(false);
     window.scrollTo({ top: 0, behavior: 'auto' });
@@ -2901,7 +2903,6 @@ export default function App() {
           setSelectedProductId(null);
           window.scrollTo({ top: 0, behavior: 'auto' });
         }
-        setIsMenuOpen(false);
         setIsRoleDropdownOpen(false);
         setIsProfileOpen(false);
         setIsProfileModalOpen(false);
@@ -3365,39 +3366,25 @@ export default function App() {
                 />
               </form>
 
-              <button
-                className={`hamburger-menu${isMenuOpen ? ' is-open' : ''}`}
-                type="button"
-                onClick={() => setIsMenuOpen((open) => !open)}
-                aria-label={isMenuOpen ? 'Close menu' : 'Open menu'}
-                aria-expanded={isMenuOpen}
-                aria-controls="kukuta-menu"
-                title={isMenuOpen ? 'Close menu' : 'Open menu'}
-              >
-                <span></span>
-                <span></span>
-                <span></span>
-              </button>
-
-              <div className={`utility-buttons ${isMenuOpen ? 'expanded' : ''}`}>
+              <div className="utility-buttons">
                 {currentUser && (
                   <>
                     <button
                       className={`icon-btn notification-toggle ${unreadMessages.length ? 'active' : ''}`}
-                      onClick={() => { handleOpenMessageNotification(); setIsMenuOpen(false); }}
+                      onClick={handleOpenMessageNotification}
                       aria-label={`${unreadMessages.length} unread messages`}
                       title="Open chat messages"
                     >
                       💬
                       {unreadMessages.length > 0 && <span>{unreadMessages.length}</span>}
                     </button>
-                    <button className="icon-btn" onClick={() => { setIsCartOpen(true); setIsMenuOpen(false); }} aria-label={`Shopping cart, ${cartCount} items`} title="Shopping cart">
+                    <button className="icon-btn" onClick={() => setIsCartOpen(true)} aria-label={`Shopping cart, ${cartCount} items`} title="Shopping cart">
                       🛒
                       <span>{cartCount}</span>
                     </button>
                     <button
                       className={`icon-btn wishlist-toggle ${wishlist.length ? 'active' : ''}`}
-                      onClick={() => { toggleWishlistPanel(); setIsMenuOpen(false); }}
+                      onClick={toggleWishlistPanel}
                       aria-label="Open wishlist"
                       title="Wishlist"
                     >
@@ -3412,54 +3399,6 @@ export default function App() {
                   </button>
                 )}
               </div>
-
-              {isMenuOpen && (
-                <div className="navbar-dropdown" id="kukuta-menu" aria-label="Account menu">
-                  {currentUser ? (
-                    <>
-                      <div className="dropdown-section">
-                        <div className="dropdown-header">Your Account</div>
-                        <button className="dropdown-item" onClick={() => { setIsProfileOpen(!isProfileOpen); setIsMenuOpen(false); }}>
-                          👤 {currentUser.name}
-                        </button>
-                        <button className="dropdown-item" onClick={() => { 
-                          handleRoleToggle(currentUser.role === 'seller' ? 'buyer' : 'seller');
-                          setIsMenuOpen(false);
-                        }}>
-                          Switch to {currentUser.role === 'seller' ? 'Buyer' : 'Seller'}
-                        </button>
-                        {currentUser.role === 'seller' && (
-                          <>
-                            <button className="dropdown-item" onClick={openSellerDashboard}>
-                              Dashboard
-                            </button>
-                            <button className="dropdown-item" onClick={() => { setIsAddProductOpen(true); setIsMenuOpen(false); }}>
-                              + Add Product
-                            </button>
-                          </>
-                        )}
-                        {currentUser.role === 'buyer' && (
-                          <button className="dropdown-item" onClick={openBuyerDashboard}>
-                            Buyer Dashboard
-                          </button>
-                        )}
-                      </div>
-                      <button className="dropdown-item logout" onClick={() => { handleLogout(); setIsMenuOpen(false); }}>
-                        Logout
-                      </button>
-                    </>
-                  ) : (
-                    <div className="dropdown-section">
-                      <button className="dropdown-item" onClick={() => { setIsLoginOpen(true); setIsMenuOpen(false); }}>
-                        Login
-                      </button>
-                      <button className="dropdown-item" onClick={() => { setIsSigninOpen(true); setIsMenuOpen(false); }}>
-                        Sign Up
-                      </button>
-                    </div>
-                  )}
-                </div>
-              )}
 
               <div className="auth-buttons">
                 {currentUser ? (
@@ -3508,16 +3447,27 @@ export default function App() {
                     </div>
 
                     <div className="profile-container">
-                      <button className="profile-icon" onClick={() => setIsProfileOpen(!isProfileOpen)} aria-expanded={isProfileOpen} aria-haspopup="true">
-                        👤 {currentUser.name}
+                      <button
+                        className="profile-icon"
+                        type="button"
+                        onClick={() => setIsProfileOpen(!isProfileOpen)}
+                        aria-expanded={isProfileOpen}
+                        aria-haspopup="true"
+                        aria-controls="profile-dropdown-menu"
+                      >
+                        <span className="profile-trigger-avatar" aria-hidden="true">
+                          {(currentUser.name || 'U').charAt(0).toUpperCase()}
+                        </span>
+                        <span className="profile-trigger-name">{currentUser.name}</span>
+                        <span className="profile-trigger-chevron" aria-hidden="true">⌄</span>
                       </button>
                       {isProfileOpen && (
-                        <div className="profile-dropdown">
+                        <div className="profile-dropdown" id="profile-dropdown-menu">
                           <div className="profile-dropdown-identity">
                             <div className="profile-dropdown-avatar" aria-hidden="true">{(currentUser.name || 'U').charAt(0).toUpperCase()}</div>
                             <div>
                               <strong>{currentUser.name}</strong>
-                              <span>{currentUser.role || 'buyer'}</span>
+                              <span className="profile-role-badge">{currentUser.role || 'buyer'}</span>
                             </div>
                           </div>
                           <div className="profile-dropdown-actions">
@@ -3719,11 +3669,29 @@ export default function App() {
       >
         {!selectedProduct && <h2 className="section-title">Our Products</h2>}
         {loading ? (
-          <div className="loading">Loading products...</div>
+          <div className="product-grid product-skeleton-grid" role="status" aria-label="Loading products">
+            {Array.from({ length: 6 }, (_, index) => (
+              <article className="product-card product-skeleton-card" key={`product-skeleton-${index}`} aria-hidden="true">
+                <div className="product-media product-skeleton-media">
+                  <span className="product-skeleton-shape" />
+                </div>
+                <div className="product-skeleton-body">
+                  <span className="product-skeleton-line product-skeleton-title" />
+                  <div className="product-skeleton-meta">
+                    <span className="product-skeleton-line product-skeleton-price" />
+                    <span className="product-skeleton-line product-skeleton-seller" />
+                  </div>
+                  <span className="product-skeleton-line product-skeleton-description" />
+                  <span className="product-skeleton-line product-skeleton-description short" />
+                </div>
+              </article>
+            ))}
+          </div>
         ) : error ? (
           <div className="error">Error loading products: {error}</div>
         ) : selectedProduct ? (
           <ProductDetail
+            key={selectedProduct.id}
             product={selectedProduct}
             relatedProducts={relatedProducts}
             onBack={handleBackToProducts}
@@ -3766,6 +3734,8 @@ export default function App() {
         <p>&copy; 2024 Kukuta Hen Farm. All rights reserved.</p>
         <p>Sustainability | Quality | Care</p>
       </footer>}
+
+      <SupportChat />
     </>
       )}
     </>

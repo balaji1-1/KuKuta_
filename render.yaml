@@ -22,7 +22,11 @@ services:
       - key: GUNICORN_THREADS
         value: "4"
       - key: API_REQUEST_MINUTE_LIMIT
-        value: "1000000"
+        value: "10000"
+      - key: DJANGO_USER_THROTTLE_RATE
+        value: "1000/minute"
+      - key: DJANGO_ANON_THROTTLE_RATE
+        value: "100/minute"
       - key: DJANGO_SECURE_SSL_REDIRECT
         value: "1"
       - key: DJANGO_SECURE_COOKIE
@@ -30,7 +34,7 @@ services:
       - key: DJANGO_SECRET_KEY
         generateValue: true
       - key: DJANGO_ALLOWED_HOSTS
-        value: "*.onrender.com"
+        value: "kukuta-backend.onrender.com"
       - key: EMAIL_BACKEND
         value: "django.core.mail.backends.smtp.EmailBackend"
       - key: EMAIL_HOST
