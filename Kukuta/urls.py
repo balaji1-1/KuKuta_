@@ -22,6 +22,7 @@ from django.urls import path, re_path, include  # type: ignore[import]
 from django.shortcuts import render  # type: ignore[import]
 from django.conf import settings  # type: ignore[import]
 from django.conf.urls.static import static  # type: ignore[import]
+from django.views.static import serve as serve_media_file
 
 
 def index_view(request):
@@ -38,8 +39,13 @@ urlpatterns = [
     path('api/', include('project_k.urls')),
 ]
 
-# Serve media files before the SPA catch-all so /media/... returns files instead of the index
-urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+# Serve media files before the SPA catch-all so /media/... returns files instead of the index.
+if os.environ.get('DJANGO_LOCAL_TUNNEL') == '1':
+    urlpatterns += [
+        re_path(r'^media/(?P<path>.*)$', serve_media_file, {'document_root': settings.MEDIA_ROOT}),
+    ]
+else:
+    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 
 # Root and catch-all for the single-page app
 urlpatterns += [

@@ -175,28 +175,39 @@ WSGI_APPLICATION = 'Kukuta.wsgi.application'
 
 _MYSQL_REQUIRED_SETTINGS = ('MYSQL_DATABASE', 'MYSQL_USER', 'MYSQL_PASSWORD', 'MYSQL_HOST')
 _missing_mysql_settings = [key for key in _MYSQL_REQUIRED_SETTINGS if not os.environ.get(key)]
-if _missing_mysql_settings:
-    raise ImproperlyConfigured(
-        'Configure these MySQL environment variables for development and production: '
-        + ', '.join(_missing_mysql_settings)
-    )
-if not DEBUG and not os.environ.get('REDIS_URL'):
+_LOCAL_TUNNEL_MODE = os.environ.get('DJANGO_LOCAL_TUNNEL') == '1'
+# A single-process local tunnel can use the in-memory cache.
+if not DEBUG and not os.environ.get('REDIS_URL') and not _LOCAL_TUNNEL_MODE:
     raise ImproperlyConfigured('Production requires REDIS_URL for shared API throttling and caching.')
 
-DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.mysql',
-        'NAME': os.environ['MYSQL_DATABASE'],
-        'USER': os.environ['MYSQL_USER'],
-        'PASSWORD': os.environ['MYSQL_PASSWORD'],
-        'HOST': os.environ['MYSQL_HOST'],
-        'PORT': os.environ.get('MYSQL_PORT', '3306'),
-        'OPTIONS': {
-            'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-            'connect_timeout': 5,
+if DEBUG and _missing_mysql_settings:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
         }
     }
-}
+else:
+    if _missing_mysql_settings:
+        raise ImproperlyConfigured(
+            'Configure these MySQL environment variables for development and production: '
+            + ', '.join(_missing_mysql_settings)
+        )
+
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.mysql',
+            'NAME': os.environ['MYSQL_DATABASE'],
+            'USER': os.environ['MYSQL_USER'],
+            'PASSWORD': os.environ['MYSQL_PASSWORD'],
+            'HOST': os.environ['MYSQL_HOST'],
+            'PORT': os.environ.get('MYSQL_PORT', '3306'),
+            'OPTIONS': {
+                'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+                'connect_timeout': 5,
+            }
+        }
+    }
 
 
 # Password hashing - Use Argon2 for stronger security
@@ -322,7 +333,7 @@ REST_FRAMEWORK = {
     'DEFAULT_CONTENT_NEGOTIATION_CLASS': 'rest_framework.negotiation.DefaultContentNegotiation',
 }
 
-SECURE_SSL_REDIRECT = os.environ.get('DJANGO_SECURE_COOKIE', '0') == '1'
+SECURE_SSL_REDIRECT = os.environ.get('DJANGO_SECURE_SSL_REDIRECT', '0') == '1'
 SECURE_HSTS_SECONDS = 31536000 if not DEBUG else 0
 SECURE_HSTS_INCLUDE_SUBDOMAINS = True
 SECURE_HSTS_PRELOAD = True
