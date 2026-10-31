@@ -25,6 +25,7 @@ load_dotenv(BASE_DIR / '.env')
 
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = os.environ.get('DJANGO_DEBUG', '1') == '1'
+CLOUDINARY_URL = os.environ.get('CLOUDINARY_URL', '').strip()
 
 # SECURITY WARNING: keep the secret key used in production secret!
 _configured_secret_key = os.environ.get('DJANGO_SECRET_KEY')
@@ -142,6 +143,8 @@ INSTALLED_APPS = [
     "crispy_bootstrap5",
     'corsheaders',
 ]
+if CLOUDINARY_URL:
+    INSTALLED_APPS.extend(['cloudinary', 'cloudinary_storage'])
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -283,12 +286,23 @@ STATICFILES_DIRS = [
 ]
 STATIC_ROOT = BASE_DIR / 'staticfiles'
 
-# WhiteNoise settings for serving static files efficiently
-STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
-
 # Media files (User uploaded files)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = BASE_DIR / 'media'
+if not DEBUG and not CLOUDINARY_URL:
+    raise ImproperlyConfigured(
+        'CLOUDINARY_URL must be configured for persistent production media storage.'
+    )
+
+STORAGES = {
+    'default': {
+        'BACKEND': 'Kukuta.storage.OptionalCloudinaryStorage',
+        'OPTIONS': {'resource_type': 'raw'},
+    },
+    'staticfiles': {
+        'BACKEND': 'whitenoise.storage.CompressedManifestStaticFilesStorage',
+    },
+}
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field

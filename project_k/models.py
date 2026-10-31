@@ -4,6 +4,7 @@ from django.db import models  # type: ignore
 from django.contrib.auth.models import User  # type: ignore
 from django.db.models.signals import post_save  # type: ignore
 from django.dispatch import receiver  # type: ignore
+from Kukuta.storage import OptionalCloudinaryStorage
 
 class Product(models.Model):
     BIRD_TYPE_CHOICES = [
@@ -40,7 +41,12 @@ class Product(models.Model):
 
 class ProductImage(models.Model):
     product = models.ForeignKey(Product, related_name='images', on_delete=models.CASCADE)
-    image = models.ImageField(upload_to='products/images/', blank=True, null=True)
+    image = models.ImageField(
+        upload_to='products/images/',
+        storage=OptionalCloudinaryStorage('image'),
+        blank=True,
+        null=True,
+    )
     image_url = models.URLField(blank=True, null=True)  # For external URLs or base64 data
     alt_text = models.CharField(max_length=200, blank=True, null=True)
     is_primary = models.BooleanField(default=False)  # Mark one image as primary
@@ -55,7 +61,12 @@ class ProductImage(models.Model):
 
 class ProductVideo(models.Model):
     product = models.ForeignKey(Product, related_name='videos', on_delete=models.CASCADE)
-    video = models.FileField(upload_to='products/videos/', blank=True, null=True)
+    video = models.FileField(
+        upload_to='products/videos/',
+        storage=OptionalCloudinaryStorage('video'),
+        blank=True,
+        null=True,
+    )
     video_url = models.URLField(blank=True, null=True)  # For external URLs or base64 data
     title = models.CharField(max_length=200, blank=True, null=True)
     description = models.TextField(blank=True, null=True)
@@ -209,7 +220,10 @@ class ProductReview(models.Model):
 
 class ProductReviewImage(models.Model):
     review = models.ForeignKey(ProductReview, related_name='images', on_delete=models.CASCADE)
-    image = models.ImageField(upload_to='products/reviews/')
+    image = models.ImageField(
+        upload_to='products/reviews/',
+        storage=OptionalCloudinaryStorage('image'),
+    )
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -227,4 +241,3 @@ def ensure_user_profile(sender, instance, created, **kwargs):
     else:
         UserProfile.objects.get_or_create(user=instance)
         UserCredential.objects.get_or_create(user=instance)
-

@@ -65,5 +65,7 @@ services:
         sync: false
       - key: MYSQL_PORT
         value: "3306"
+      - key: CLOUDINARY_URL
+        sync: false
       - key: REDIS_URL
         sync: false

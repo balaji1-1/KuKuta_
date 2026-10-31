@@ -11,7 +11,7 @@ application.
 - Access to the existing `Kukuta` Blueprint in Render
 - A reachable MySQL database and Redis instance
 - SMTP credentials for account emails
-- Persistent media storage before accepting production uploads
+- Cloudinary storage credentials before accepting production uploads
 
 ## Prepare and validate the repository
 
@@ -68,18 +68,24 @@ before retrying a deploy. Do not put database credentials in this document.
 Twilio variables (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and
 `TWILIO_FROM_NUMBER`) are optional and only needed for SMS delivery.
 
-## Confirm uploads will persist
+### Durable product media
 
-The Django app stores uploaded product and review media under `MEDIA_ROOT`. Render
-service filesystems are ephemeral by default, so uploads on the current Free web
-service are not durable across deploys or restarts. Before accepting production
-uploads, configure external object storage or approve upgrading the service and
-attaching a persistent disk mounted at the app's media directory. A persistent disk
-requires a paid Render service.
+The app supports Cloudinary for image, video, audio, and other product uploads.
+Create a Cloudinary account and set its `CLOUDINARY_URL` directly in the Render
+service environment. The value contains credentials; never commit or send it in
+chat. The app intentionally refuses to start in production without this setting.
+Local development continues to use the local media directory when the setting is
+absent.
+
+Existing files already stored on a local disk are not copied automatically to
+Cloudinary. If the database contains previously uploaded files, migrate them to
+Cloudinary before enabling the Cloudinary setting to avoid broken media links.
+Render's Free service filesystem is ephemeral, so local uploads are not durable
+across deploys or restarts.
 
 ## Deploy and verify
 
-Once MySQL, Redis, email, and media storage are configured:
+Once MySQL, Redis, email, and `CLOUDINARY_URL` are configured:
 
 1. Push the validated commit to `master`.
 2. Let the existing Blueprint sync, or choose **Manual Deploy → Deploy Latest Commit**
@@ -87,7 +93,7 @@ Once MySQL, Redis, email, and media storage are configured:
 3. Check Render's build and deploy logs. The Blueprint build runs migrations, so the
    database must be reachable during the build.
 4. Open the service URL and verify the homepage, product listing, authentication,
-   email delivery, product upload, and media retrieval.
+   email delivery, product upload, and media retrieval from Cloudinary.
 
 ## Troubleshooting
 
@@ -95,8 +101,8 @@ Once MySQL, Redis, email, and media storage are configured:
   connections from Render; then check database name, user, password, and port.
 - **Email does not send:** verify `EMAIL_HOST_USER` and the Gmail App Password in
   the Render environment.
-- **Uploads disappear after redeploy:** configure object storage or a paid persistent
-  disk before enabling production uploads.
+- **Media uploads fail:** confirm `CLOUDINARY_URL` is set in Render and that the
+  Cloudinary account is active.
 - **Slow first request:** the current Free web service can spin down when idle.
 
 ## Support
