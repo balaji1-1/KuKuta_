@@ -49,21 +49,28 @@ not the account password.
 
 ### MySQL and Redis (required)
 
-Configure working, externally reachable service credentials:
+Configure working, externally reachable TiDB Cloud Starter credentials:
 
 ```text
 MYSQL_DATABASE
 MYSQL_USER
 MYSQL_PASSWORD
 MYSQL_HOST
-MYSQL_PORT=3306
+MYSQL_PORT=4000
+MYSQL_SSL_ENABLED=1
+MYSQL_SSL_CA=/etc/ssl/certs/ca-certificates.crt
 REDIS_URL
 ```
 
 The current Render deploy fails during `migrate` because the configured MySQL
-hostname cannot be resolved. Replace `MYSQL_HOST` with the correct database
-hostname and verify that the database provider allows connections from Render
-before retrying a deploy. Do not put database credentials in this document.
+hostname cannot be resolved. For TiDB Cloud Starter, use the public endpoint
+hostname shown in its **Connect** dialog, the TiDB database name, and the
+instance-prefixed username. Keep the port and TLS settings above. Set passwords
+directly in Render; do not put database credentials in this document or chat.
+
+Add the Render service's outbound IP ranges to the TiDB public-endpoint firewall
+allowlist. Do not allow all source IPs. TiDB's free allowance can incur usage
+charges beyond its included limits, so configure a spend limit before deploying.
 
 Twilio variables (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and
 `TWILIO_FROM_NUMBER`) are optional and only needed for SMS delivery.

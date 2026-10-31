@@ -64,7 +64,11 @@ services:
       - key: MYSQL_HOST
         sync: false
       - key: MYSQL_PORT
-        value: "3306"
+        value: "4000"
+      - key: MYSQL_SSL_ENABLED
+        value: "1"
+      - key: MYSQL_SSL_CA
+        value: "/etc/ssl/certs/ca-certificates.crt"
       - key: CLOUDINARY_URL
         sync: false
       - key: REDIS_URL

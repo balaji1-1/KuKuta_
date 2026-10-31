@@ -218,6 +218,18 @@ else:
             + ', '.join(_missing_mysql_settings)
         )
 
+    _mysql_options = {
+        'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
+        'connect_timeout': 5,
+    }
+    if os.environ.get('MYSQL_SSL_ENABLED', '0') == '1':
+        _mysql_options['ssl'] = {
+            'ca': os.environ.get(
+                'MYSQL_SSL_CA',
+                '/etc/ssl/certs/ca-certificates.crt',
+            ),
+        }
+
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.mysql',
@@ -226,10 +238,7 @@ else:
             'PASSWORD': os.environ['MYSQL_PASSWORD'],
             'HOST': os.environ['MYSQL_HOST'],
             'PORT': os.environ.get('MYSQL_PORT', '3306'),
-            'OPTIONS': {
-                'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
-                'connect_timeout': 5,
-            }
+            'OPTIONS': _mysql_options,
         }
     }
 
